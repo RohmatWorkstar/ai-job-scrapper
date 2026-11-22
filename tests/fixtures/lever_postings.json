@@ -1,0 +1,15 @@
+[
+  {
+    "id": "0f1e2d3c-aaaa-bbbb-cccc-111122223333",
+    "text": "Fullstack Developer",
+    "categories": {"commitment": "Full-time", "location": "Remote - Asia", "team": "Engineering", "allLocations": ["Remote - Asia"]},
+    "createdAt": 1795000000000,
+    "descriptionPlain": "We build tools for merchants. You will work with React, Node.js and PostgreSQL. 2+ years experience.",
+    "lists": [{"text": "Requirements", "content": "<li>React</li><li>Node.js</li><li>PostgreSQL</li>"}],
+    "country": "ID",
+    "workplaceType": "remote",
+    "hostedUrl": "https://jobs.lever.co/fixtureco/0f1e2d3c-aaaa-bbbb-cccc-111122223333",
+    "applyUrl": "https://jobs.lever.co/fixtureco/0f1e2d3c-aaaa-bbbb-cccc-111122223333/apply",
+    "salaryRange": {"currency": "USD", "interval": "per-year-salary", "min": 30000, "max": 45000}
+  }
+]

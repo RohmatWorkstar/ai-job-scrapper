@@ -1,0 +1,36 @@
+Andi Pratama
+Fullstack Developer | Jakarta, Indonesia
+andi.pratama@example.com | +62 812 3456 7890 | linkedin.com/in/andi-example
+
+PROFESSIONAL SUMMARY
+Fullstack developer with hands-on experience building web applications and REST APIs for
+e-commerce and fintech products. Comfortable across the stack from React to Node.js services.
+
+WORK EXPERIENCE
+Fullstack Developer - PT Contoh Digital Nusantara (Fintech)
+Jan 2022 - Present
+• Built and maintained React + TypeScript dashboards used by 20k merchants.
+• Designed REST APIs with Node.js, Express and Prisma on PostgreSQL.
+• Introduced Docker-based local environments and GitHub Actions CI/CD.
+
+Backend Developer - CV Toko Daring Sejahtera (E-commerce)
+Mar 2020 - Dec 2021
+• Developed Laravel (PHP) services and MySQL schemas for order management.
+• Integrated payment gateways and built MongoDB-based reporting jobs.
+
+EDUCATION
+Bachelor of Computer Science - Universitas Contoh Indonesia, 2019
+
+SKILLS
+JavaScript, TypeScript, React, Next.js, Node.js, Express, Laravel, PHP, Python,
+PostgreSQL, MySQL, MongoDB, Redis, Docker, Git, REST API, Jest
+
+PROJECTS
+Inventory Tracker - open-source Node.js + React inventory app
+Payment Reconciliation Service - Python batch tool for fintech settlements
+
+CERTIFICATIONS
+AWS Certified Cloud Practitioner (2023)
+
+LANGUAGES
+Indonesian (Native), English (Professional working proficiency)

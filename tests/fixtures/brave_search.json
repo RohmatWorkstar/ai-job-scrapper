@@ -1,0 +1,33 @@
+{
+  "type": "search",
+  "query": {"original": "site:linkedin.com/posts \"we are hiring\" \"Backend Developer\"", "more_results_available": false},
+  "web": {
+    "type": "search",
+    "results": [
+      {
+        "title": "We are hiring a Backend Developer (Node.js) - Fixture Labs | LinkedIn",
+        "url": "https://www.linkedin.com/posts/fixture-labs_hiring-backend-nodejs-activity-1234567890",
+        "description": "Fixture Labs is hiring! We are looking for a Backend Developer with Node.js, Express and PostgreSQL experience. Remote (Indonesia). Send your CV to careers@fixturelabs.example",
+        "age": "2 days ago",
+        "page_age": "2026-11-20T08:00:00"
+      },
+      {
+        "title": "Backend Engineer - Contoh Teknologi | Greenhouse",
+        "url": "https://job-boards.greenhouse.io/contohtek/jobs/4455667",
+        "description": "Contoh Teknologi is looking for a Backend Engineer in Jakarta (hybrid). Node.js, TypeScript, PostgreSQL.",
+        "page_age": "2026-11-19T10:00:00"
+      },
+      {
+        "title": "Fullstack Developer - Example Corp Careers",
+        "url": "https://careers.example-corp.test/jobs/fullstack-developer",
+        "description": "Join Example Corp as a Fullstack Developer. React, Node.js. Apply now.",
+        "age": "3 days ago"
+      },
+      {
+        "title": "10 Backend Developer interview tips for 2026",
+        "url": "https://blog.example-news.test/backend-interview-tips",
+        "description": "Interview tips and salary guide for backend developers."
+      }
+    ]
+  }
+}

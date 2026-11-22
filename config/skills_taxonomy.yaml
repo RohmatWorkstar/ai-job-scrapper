@@ -1,0 +1,113 @@
+# Technology taxonomy used for deterministic skill detection in CVs and job posts.
+# Each entry: canonical name -> aliases (case-insensitive literal matches) and
+# optional regex `patterns` (case-sensitive) for ambiguous short names such as "Go" or "R".
+
+programming_languages:
+  JavaScript: {aliases: [javascript, es6, ecmascript]}
+  TypeScript: {aliases: [typescript]}
+  Python: {aliases: [python]}
+  PHP: {aliases: [php]}
+  Java: {aliases: [java], exclude_following: ["script"]}
+  Kotlin: {aliases: [kotlin]}
+  Swift: {aliases: [swift]}
+  Go: {aliases: [golang], patterns: ['\bGo\b(?=\s*(?:lang\b|,|/|\)|\(|developer|engineer|programming|microservice))', '(?<=[,/(]\s)Go\b', '(?<=[,/(])Go\b']}
+  Rust: {aliases: [rust]}
+  Ruby: {aliases: [ruby]}
+  C#: {aliases: ["c#", csharp]}
+  C++: {aliases: ["c++", cpp]}
+  C: {patterns: ['(?<![\w+#.])C(?=\s*(?:,|/|\)|programming|language))']}
+  Dart: {aliases: [dart]}
+  Scala: {aliases: [scala]}
+  R: {patterns: ['(?<=[,/(]\s)R\b(?![&\w])', '\bR\s+(?:programming|language)']}
+  SQL: {aliases: [sql]}
+  Bash: {aliases: [bash, shell scripting]}
+  HTML: {aliases: [html, html5]}
+  CSS: {aliases: [css, css3]}
+  Solidity: {aliases: [solidity]}
+
+frameworks:
+  React: {aliases: [react, react.js, reactjs]}
+  Next.js: {aliases: [next.js, nextjs]}
+  Vue.js: {aliases: [vue, vue.js, vuejs]}
+  Nuxt: {aliases: [nuxt, nuxt.js, nuxtjs]}
+  Angular: {aliases: [angular, angularjs]}
+  Svelte: {aliases: [svelte, sveltekit]}
+  Node.js: {aliases: [node.js, nodejs, node js]}
+  Express: {aliases: [express.js, expressjs], patterns: ['\bExpress\b']}
+  NestJS: {aliases: [nestjs, nest.js]}
+  Laravel: {aliases: [laravel]}
+  CodeIgniter: {aliases: [codeigniter]}
+  Symfony: {aliases: [symfony]}
+  Django: {aliases: [django]}
+  Flask: {aliases: [flask]}
+  FastAPI: {aliases: [fastapi]}
+  Spring Boot: {aliases: [spring boot, springboot, spring framework]}
+  .NET: {aliases: [".net", dotnet, asp.net, ".net core"]}
+  Ruby on Rails: {aliases: [ruby on rails, rails]}
+  Flutter: {aliases: [flutter]}
+  React Native: {aliases: [react native]}
+  jQuery: {aliases: [jquery]}
+  Tailwind CSS: {aliases: [tailwind, tailwindcss, tailwind css]}
+  Bootstrap: {aliases: [bootstrap]}
+  Redux: {aliases: [redux]}
+  GraphQL: {aliases: [graphql]}
+  Prisma: {aliases: [prisma]}
+  Sequelize: {aliases: [sequelize]}
+  TypeORM: {aliases: [typeorm]}
+  Gin: {aliases: [gin-gonic], patterns: ['\bGin\b']}
+  TensorFlow: {aliases: [tensorflow]}
+  PyTorch: {aliases: [pytorch]}
+  scikit-learn: {aliases: [scikit-learn, sklearn]}
+  Pandas: {aliases: [pandas]}
+  LangChain: {aliases: [langchain]}
+  Electron: {aliases: [electron.js, electronjs], patterns: ['\bElectron\b']}
+
+databases:
+  PostgreSQL: {aliases: [postgresql, postgres, psql]}
+  MySQL: {aliases: [mysql]}
+  MariaDB: {aliases: [mariadb]}
+  MongoDB: {aliases: [mongodb, mongo db, mongoose]}
+  Redis: {aliases: [redis]}
+  SQLite: {aliases: [sqlite]}
+  Microsoft SQL Server: {aliases: [sql server, mssql, ms sql]}
+  Oracle Database: {aliases: [oracle database, oracle db, pl/sql]}
+  Elasticsearch: {aliases: [elasticsearch, elastic search, opensearch]}
+  Firebase: {aliases: [firebase, firestore]}
+  DynamoDB: {aliases: [dynamodb]}
+  Cassandra: {aliases: [cassandra]}
+  BigQuery: {aliases: [bigquery]}
+  Supabase: {aliases: [supabase]}
+
+tools:
+  Git: {aliases: [git, github, gitlab, bitbucket]}
+  Docker: {aliases: [docker, docker compose, docker-compose]}
+  Kubernetes: {aliases: [kubernetes, k8s]}
+  Terraform: {aliases: [terraform]}
+  AWS: {aliases: [aws, amazon web services, ec2, aws lambda]}
+  Google Cloud: {aliases: [google cloud, gcp, google cloud platform]}
+  Azure: {aliases: [azure, microsoft azure]}
+  CI/CD: {aliases: [ci/cd, github actions, gitlab ci, jenkins, circleci]}
+  Linux: {aliases: [linux, ubuntu, centos, debian]}
+  Nginx: {aliases: [nginx]}
+  RabbitMQ: {aliases: [rabbitmq]}
+  Kafka: {aliases: [kafka, apache kafka]}
+  Apache Spark: {aliases: [apache spark, pyspark], patterns: ['\bSpark\b']}
+  Airflow: {aliases: [airflow, apache airflow]}
+  dbt: {aliases: [dbt]}
+  REST API: {aliases: [rest api, restful, rest apis, restful api]}
+  Microservices: {aliases: [microservices, microservice]}
+  Webpack: {aliases: [webpack]}
+  Vite: {aliases: [vite]}
+  Jest: {aliases: [jest]}
+  Cypress: {aliases: [cypress]}
+  Selenium: {aliases: [selenium]}
+  Playwright: {aliases: [playwright]}
+  Postman: {aliases: [postman]}
+  Jira: {aliases: [jira]}
+  Figma: {aliases: [figma]}
+  Power BI: {aliases: [power bi, powerbi]}
+  Tableau: {aliases: [tableau]}
+  Socket.IO: {aliases: [socket.io, websocket, websockets]}
+  OAuth/JWT: {aliases: [jwt, oauth, oauth2]}
+  Agile/Scrum: {aliases: [agile, scrum, kanban]}
+  Unit Testing: {aliases: [unit testing, unit test, tdd]}

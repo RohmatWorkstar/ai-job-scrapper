@@ -1,0 +1,237 @@
+# Search vocabulary and source targets. Edit freely; no Python changes required.
+
+# Hiring phrases combined with role titles for search-engine discovery.
+hiring_phrases:
+  en:
+    - "we are hiring"
+    - "we're hiring"
+    - "now hiring"
+    - "open position"
+    - "join our team"
+    - "send your CV"
+    - "looking for"
+    - "apply now"
+  id:
+    - "lowongan kerja"
+    - "kami sedang mencari"
+    - "dibutuhkan"
+    - "loker"
+    - "kirim CV"
+    - "bergabung bersama kami"
+
+# Localized wording used when a language other than English is selected.
+localized_terms:
+  id:
+    remote: "remote"
+    hybrid: "hybrid"
+    full_time: "full time"
+    contract: "kontrak"
+    part_time: "paruh waktu"
+    internship: "magang"
+    freelance: "freelance"
+    jobs: "lowongan"
+
+# Job portals searched through indexed public pages (search provider "site:" queries).
+# The portals themselves are not scraped directly.
+job_portals:
+  - {name: LinkedIn Jobs, site: linkedin.com/jobs/view, regions: [global]}
+  - {name: JobStreet, site: jobstreet.co.id, regions: [Indonesia]}
+  - {name: JobStreet (MY/SG), site: jobstreet.com, regions: [Malaysia, Singapore]}
+  - {name: Indeed Indonesia, site: id.indeed.com, regions: [Indonesia]}
+  - {name: Glints, site: glints.com, regions: [Indonesia, Singapore, Malaysia]}
+  - {name: Kalibrr, site: kalibrr.com, regions: [Indonesia]}
+  - {name: Tech in Asia Jobs, site: techinasia.com/jobs, regions: [Indonesia, Singapore, Malaysia]}
+  - {name: Glassdoor, site: glassdoor.com, regions: [global]}
+  - {name: Wellfound, site: wellfound.com/jobs, regions: [global]}
+  - {name: We Work Remotely, site: weworkremotely.com, regions: [global]}
+  - {name: Dealls, site: dealls.com, regions: [Indonesia]}
+
+# Public social media searched through indexed public posts only.
+social_sites:
+  - {name: LinkedIn Posts, site: linkedin.com/posts}
+  - {name: LinkedIn Feed, site: linkedin.com/feed/update}
+  - {name: X / Twitter, site: x.com}
+  - {name: Facebook (public), site: facebook.com}
+  - {name: Instagram (public), site: instagram.com}
+  - {name: Threads (public), site: threads.net}
+
+# Public communities searched through indexed pages.
+community_sites:
+  - {name: Reddit, site: reddit.com}
+  - {name: Dev.to, site: dev.to}
+  - {name: Hacker News, site: news.ycombinator.com}
+  - {name: Kaskus, site: kaskus.co.id, regions: [Indonesia]}
+
+# ATS hosts: used for "site:" discovery and to auto-detect company boards from URLs.
+ats_sites:
+  - {name: Greenhouse, site: boards.greenhouse.io}
+  - {name: Greenhouse, site: job-boards.greenhouse.io}
+  - {name: Lever, site: jobs.lever.co}
+  - {name: Ashby, site: jobs.ashbyhq.com}
+  - {name: SmartRecruiters, site: jobs.smartrecruiters.com}
+  - {name: Workday, site: myworkdayjobs.com}
+
+# Company ATS boards always crawled through their documented public job-board APIs.
+# All entries below were confirmed to exist on 2026-11-22. Add your own target companies.
+ats_seed_boards:
+  greenhouse: [gitlab, cloudflare, stripe, figma, databricks, airbnb, canonical, xendit, vercel, mongodb,
+               elastic, twilio, datadog, okta, coinbase, deliveroo, wise, mozilla, binance, agoda]
+  # Lever/Ashby APIs do not return the company name: give it explicitly as {token, name}.
+  lever:
+    - {token: palantir, name: Palantir}
+    - {token: ninjavan, name: Ninja Van}
+    - {token: spotify, name: Spotify}
+    - {token: binance, name: Binance}
+  ashby:
+    - {token: openai, name: OpenAI}
+    - {token: notion, name: Notion}
+    - {token: ramp, name: Ramp}
+    - {token: linear, name: Linear}
+    - {token: vanta, name: Vanta}
+    - {token: supabase, name: Supabase}
+    - {token: posthog, name: PostHog}
+    - {token: replit, name: Replit}
+    - {token: cohere, name: Cohere}
+    - {token: airwallex, name: Airwallex}
+    - {token: oyster, name: Oyster}
+    - {token: hopper, name: Hopper}
+    - {token: plaid, name: Plaid}
+  smartrecruiters: [Grab, Canva, ServiceNow, BoschGroup]
+
+# Official company career pages fetched directly (robots.txt respected).
+# Pages exposing schema.org JobPosting JSON-LD give the best results.
+company_career_pages: []
+#  - {company: Example Corp, url: "https://careers.example.com/jobs"}
+
+# Role families: used for target-position suggestions, title relevance and equivalence.
+role_families:
+  fullstack:
+    titles: [Fullstack Developer, Full Stack Engineer, Software Engineer]
+    keywords: [fullstack, full stack, full-stack]
+    signal_skills: [React, Node.js, Vue.js, Angular, Next.js, Laravel, Express, TypeScript]
+  backend:
+    titles: [Backend Developer, Backend Engineer, API Developer]
+    keywords: [backend, back-end, back end, server-side, server side, api developer, api engineer]
+    signal_skills: [Node.js, Express, NestJS, Laravel, Django, Flask, FastAPI, Spring Boot, Go, PostgreSQL, MySQL, MongoDB]
+  frontend:
+    titles: [Frontend Developer, Frontend Engineer, React Developer]
+    keywords: [frontend, front-end, front end, ui engineer, web developer, react developer, vue developer, angular developer]
+    signal_skills: [React, Vue.js, Angular, Next.js, TypeScript, JavaScript, HTML, CSS, Tailwind CSS]
+  node:
+    titles: [Node.js Developer]
+    keywords: [node.js developer, nodejs developer, node developer, node.js engineer]
+    signal_skills: [Node.js, Express, NestJS]
+  php:
+    titles: [PHP Developer, Laravel Developer]
+    keywords: [php developer, laravel developer, php engineer]
+    signal_skills: [PHP, Laravel, CodeIgniter, Symfony]
+  python:
+    titles: [Python Developer]
+    keywords: [python developer, python engineer, django developer]
+    signal_skills: [Python, Django, Flask, FastAPI]
+  java:
+    titles: [Java Developer]
+    keywords: [java developer, java engineer, spring developer]
+    signal_skills: [Java, Spring Boot]
+  mobile:
+    titles: [Mobile Developer, Android Developer, iOS Developer, Flutter Developer]
+    keywords: [mobile, android, ios, flutter, react native]
+    signal_skills: [Flutter, Kotlin, Swift, React Native, Dart]
+  devops:
+    titles: [DevOps Engineer, Site Reliability Engineer, Cloud Engineer]
+    keywords: [devops, sre, site reliability, platform engineer, cloud engineer, infrastructure engineer]
+    signal_skills: [Docker, Kubernetes, Terraform, AWS, Google Cloud, Azure, CI/CD]
+  data_engineering:
+    titles: [Data Engineer]
+    keywords: [data engineer, etl developer, analytics engineer]
+    signal_skills: [Apache Spark, Airflow, BigQuery, dbt, Kafka]
+  data_science:
+    titles: [Data Scientist, Data Analyst]
+    keywords: [data scientist, data analyst, business intelligence, bi developer]
+    signal_skills: [Pandas, scikit-learn, Power BI, Tableau, SQL]
+  ai_ml:
+    titles: [Machine Learning Engineer, AI Engineer]
+    keywords: [machine learning, ml engineer, ai engineer, llm engineer, deep learning]
+    signal_skills: [TensorFlow, PyTorch, scikit-learn, LangChain]
+  qa:
+    titles: [QA Engineer, Software Tester]
+    keywords: [qa engineer, quality assurance, software tester, test engineer, sdet, automation tester]
+    signal_skills: [Selenium, Cypress, Playwright, Jest]
+  software_engineering:
+    titles: [Software Engineer, Software Developer, Programmer]
+    keywords: [software engineer, software developer, programmer, developer, engineer, pengembang perangkat lunak]
+    signal_skills: []
+
+# Industries recognised in CVs (evidence-only; matched against CV text).
+industries:
+  - fintech
+  - banking
+  - insurance
+  - e-commerce
+  - ecommerce
+  - healthcare
+  - logistics
+  - education
+  - edtech
+  - government
+  - telecommunication
+  - media
+  - retail
+  - manufacturing
+  - travel
+  - gaming
+  - saas
+  - consulting
+  - property
+  - agriculture
+
+# Spoken languages recognised in CVs.
+spoken_languages:
+  - English
+  - Indonesian
+  - Bahasa Indonesia
+  - Javanese
+  - Sundanese
+  - Mandarin
+  - Chinese
+  - Japanese
+  - Korean
+  - Arabic
+  - German
+  - French
+  - Dutch
+  - Spanish
+  - Malay
+
+# Country names, ISO 3166-1 alpha-2 codes and aliases (for normalisation).
+countries:
+  Indonesia: {code: ID, aliases: [indonesia, jakarta, bandung, surabaya, yogyakarta, jogja, bali, denpasar, medan, semarang, tangerang, bekasi, depok, bogor, malang, makassar, jabodetabek, "south jakarta", "jakarta selatan"]}
+  Singapore: {code: SG, aliases: [singapore]}
+  Malaysia: {code: MY, aliases: [malaysia, kuala lumpur, penang, selangor, petaling jaya, cyberjaya]}
+  Philippines: {code: PH, aliases: [philippines, manila, makati, cebu, taguig]}
+  Thailand: {code: TH, aliases: [thailand, bangkok]}
+  Vietnam: {code: VN, aliases: [vietnam, viet nam, ho chi minh, hanoi]}
+  India: {code: IN, aliases: [india, bengaluru, bangalore, mumbai, hyderabad, pune, chennai, gurgaon, gurugram, noida, new delhi]}
+  Japan: {code: JP, aliases: [japan, tokyo, osaka]}
+  South Korea: {code: KR, aliases: [south korea, korea, seoul]}
+  China: {code: CN, aliases: [china, shanghai, beijing, shenzhen]}
+  Hong Kong: {code: HK, aliases: [hong kong]}
+  Taiwan: {code: TW, aliases: [taiwan, taipei]}
+  Australia: {code: AU, aliases: [australia, sydney, melbourne, brisbane, perth]}
+  New Zealand: {code: NZ, aliases: [new zealand, auckland, wellington]}
+  United Arab Emirates: {code: AE, aliases: [united arab emirates, uae, dubai, abu dhabi]}
+  Saudi Arabia: {code: SA, aliases: [saudi arabia, riyadh]}
+  Germany: {code: DE, aliases: [germany, deutschland, berlin, munich, münchen, hamburg, frankfurt, cologne, köln, stuttgart]}
+  Netherlands: {code: NL, aliases: [netherlands, amsterdam, rotterdam, utrecht, the hague, eindhoven]}
+  United Kingdom: {code: GB, aliases: [united kingdom, uk, england, london, manchester, edinburgh, scotland, cambridge]}
+  Ireland: {code: IE, aliases: [ireland, dublin]}
+  France: {code: FR, aliases: [france, paris, lyon]}
+  Spain: {code: ES, aliases: [spain, madrid, barcelona]}
+  Portugal: {code: PT, aliases: [portugal, lisbon, lisboa, porto]}
+  Poland: {code: PL, aliases: [poland, warsaw, krakow, kraków]}
+  Sweden: {code: SE, aliases: [sweden, stockholm]}
+  Switzerland: {code: CH, aliases: [switzerland, zurich, zürich, geneva]}
+  United States: {code: US, aliases: [united states, usa, "u.s.", us, new york, san francisco, seattle, austin, boston, chicago, los angeles, california, texas, remote - us, remote (us), "remote us"]}
+  Canada: {code: CA, aliases: [canada, toronto, vancouver, montreal]}
+  Brazil: {code: BR, aliases: [brazil, são paulo, sao paulo]}
+  Mexico: {code: MX, aliases: [mexico, mexico city]}

@@ -1,0 +1,196 @@
+# AI Job Intelligence & Discovery System - application settings.
+# Credentials never belong here: put them in .env (see .env.example).
+
+application:
+  name: AI Job Intelligence & Discovery System
+  timezone: Asia/Jakarta
+  user_agent: "AIJobIntelligence/1.0 (local job research CLI; respects robots.txt)"
+
+candidate:
+  cv_directory: cv
+  # Used for location/remote-eligibility scoring. Not sent to any service.
+  home_country: Indonesia
+
+paths:
+  database: data/database/job_intelligence.sqlite3
+  cache_directory: data/cache
+  log_directory: data/logs
+  preferences_file: data/preferences.json
+
+search:
+  default_geography: indonesia_worldwide      # indonesia | worldwide | indonesia_worldwide | selected
+  default_countries: [Indonesia]
+  # Countries searched explicitly when "Worldwide" is selected (plus generic remote/worldwide queries).
+  worldwide_countries:
+    - Singapore
+    - Malaysia
+    - Australia
+    - Japan
+    - United Arab Emirates
+    - Germany
+    - Netherlands
+    - United Kingdom
+    - United States
+    - Canada
+  default_employment_types: [full_time]
+  default_work_arrangements: [remote, hybrid, onsite]
+  default_publication_window_days: 7
+  include_undisclosed_salary: true
+  default_languages: [en, id]
+  broad_discovery: true
+  save_search_history: true
+  include_previous_jobs: false
+
+budget:
+  # Hard caps to control API cost and request volume per run.
+  max_search_engine_queries: 40        # total paid search API calls per run
+  results_per_query: 20                # Brave max is 20
+  max_pages_per_query: 1               # pagination depth (Brave offset max 9)
+  max_pages_to_fetch: 60               # HTML pages fetched for extraction/verification
+  max_ats_boards: 40                   # ATS boards crawled per run (seed + discovered)
+  max_feed_items_per_source: 400       # items scanned per public job feed
+
+discovery:
+  enable_search_engines: true
+  enable_job_portals: true
+  enable_company_careers: true
+  enable_ats: true
+  enable_social_media: true
+  enable_communities: true
+  enable_other_sources: true
+  # Connector classes loaded by the source registry ("module:Class").
+  # Add your own connector here without touching the discovery engine.
+  connectors:
+    - src.sources.search_engine.web_search:WebSearchSource
+    - src.sources.job_portals.indexed_portals:IndexedJobPortalSource
+    - src.sources.job_portals.remote_feeds:RemotiveSource
+    - src.sources.job_portals.remote_feeds:RemoteOKSource
+    - src.sources.job_portals.remote_feeds:ArbeitnowSource
+    - src.sources.job_portals.remote_feeds:JobicySource
+    - src.sources.job_portals.remote_feeds:HimalayasSource
+    - src.sources.company_careers.career_pages:CompanyCareerPagesSource
+    - src.sources.ats_platforms.ats:GreenhouseSource
+    - src.sources.ats_platforms.ats:LeverSource
+    - src.sources.ats_platforms.ats:AshbySource
+    - src.sources.ats_platforms.ats:SmartRecruitersSource
+    - src.sources.social_media.indexed_social:IndexedSocialMediaSource
+    - src.sources.social_media.x_api:XRecentSearchSource
+    - src.sources.communities.hackernews:HackerNewsHiringSource
+    - src.sources.communities.reddit:RedditSource
+    - src.sources.communities.indexed_communities:IndexedCommunitiesSource
+
+extraction:
+  fetch_pages_for_verification: true
+  # Playwright is optional. When enabled and installed, JS-heavy pages that return
+  # almost no text are re-rendered in a headless browser (robots.txt still applies).
+  use_browser_rendering: false
+  max_description_chars: 6000
+  # Domains never fetched directly (login walls / terms of service). Their indexed
+  # search snippets are still used.
+  no_fetch_domains:
+    - linkedin.com
+    - facebook.com
+    - instagram.com
+    - x.com
+    - twitter.com
+    - glassdoor.com
+    - glassdoor.co.id
+    - indeed.com
+    - id.indeed.com
+    - threads.net
+
+verification:
+  scam_indicators:
+    - registration fee
+    - training fee
+    - pay a fee
+    - processing fee
+    - biaya pendaftaran
+    - biaya administrasi
+    - biaya pelatihan
+    - transfer uang
+    - pay a deposit
+    - security deposit for the job
+    - earn $ per day
+    - no experience needed, earn
+    - work from home and earn
+    - whatsapp only
+    - telegram only
+    - western union
+    - crypto payment
+  closed_indicators:
+    - no longer accepting applications
+    - this job is no longer available
+    - this position has been filled
+    - position has been filled
+    - job has expired
+    - this job has expired
+    - posting has closed
+    - applications are closed
+    - lowongan ini sudah ditutup
+    - lowongan sudah ditutup
+    - lowongan telah berakhir
+    - the job you are looking for is no longer
+    - job not found
+
+matching:
+  weights:
+    position: 25
+    skills: 25
+    experience: 15
+    location: 15
+    salary: 10
+    freshness: 10
+  thresholds:
+    highly_relevant: 72
+    relevant: 58
+    potentially_relevant: 40
+    needs_review_min: 25
+
+ai:
+  enabled: true
+  # flash | flash-lite. Used only when AI_MODEL is empty: the newest stable model of
+  # this family is resolved from the Gemini models.list endpoint at runtime.
+  model_preference: flash
+  max_calls_per_run: 25
+  extraction_batch_size: 8
+  matching_batch_size: 10
+  max_jobs_for_ai_matching: 60
+  cache_responses: true
+  request_timeout_seconds: 90
+
+performance:
+  max_concurrency: 5
+  request_timeout_seconds: 30
+  retry_attempts: 2
+  backoff_base_seconds: 1.5
+  max_response_bytes: 4000000
+  default_host_interval_seconds: 1.0
+  # Minimum seconds between requests per host (politeness / provider rate limits).
+  host_intervals:
+    api.search.brave.com: 1.1
+    remotive.com: 2.0
+    remoteok.com: 2.0
+    www.reddit.com: 2.0
+    oauth.reddit.com: 1.0
+    hn.algolia.com: 0.5
+    generativelanguage.googleapis.com: 0.5
+    # Documented public job-board APIs (CDN-backed, built for programmatic access)
+    boards-api.greenhouse.io: 0.25
+    api.lever.co: 0.25
+    api.ashbyhq.com: 0.25
+    api.smartrecruiters.com: 0.25
+  # Cache lifetime (hours) for public feeds - several providers ask for few calls/day.
+  cache_ttl_hours:
+    remotive.com: 6
+    remoteok.com: 6
+    www.arbeitnow.com: 1
+    jobicy.com: 2
+    himalayas.app: 2
+    default: 0.5
+
+reporting:
+  output_directory: reports
+  docx_enabled: true
+  xlsx_enabled: true
+  write_raw_discovery_json: true

@@ -94,7 +94,12 @@ class Application:
             return False
         if self.args.max_queries is not None:
             self.settings.raw.setdefault("budget", {})["max_search_engine_queries"] = max(0, self.args.max_queries)
-        log_path = setup_logging(self.settings.log_directory, secrets=self.settings.credentials.secret_values())
+        import os
+
+        extra_secrets = [os.environ.get("GMAIL_APP_PASSWORD", "").strip()]
+        extra_secrets += [s.replace(" ", "") for s in extra_secrets]
+        log_path = setup_logging(self.settings.log_directory,
+                                 secrets=self.settings.credentials.secret_values() + [s for s in extra_secrets if s])
         ui.ok("Configuration loaded.")
         cv_dir = self.settings.cv_directory
         cv_dir.mkdir(parents=True, exist_ok=True)

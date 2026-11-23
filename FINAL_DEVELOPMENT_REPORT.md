@@ -401,7 +401,25 @@ None remaining. Defects found during development and fixed:
 
 ## 10. Configuration Guide
 
-### Gmail (one-time)
+### Gmail option A: App Password over SMTP (no Google Cloud project, no credit card)
+
+1. Use a **personal @gmail.com** account and turn on **2-Step Verification**.
+2. Create an App Password at <https://myaccount.google.com/apppasswords>.
+3. Put it **yourself** in `.env` as `GMAIL_APP_PASSWORD=...` (spaces are fine), together with
+   `GMAIL_SENDER_ADDRESS=you@gmail.com`. Never paste it in a chat, ticket or commit.
+4. Leave `applications.sending.transport: auto`. SMTP (`smtp.gmail.com:587`, STARTTLS) is used
+   automatically when the App Password is set.
+
+Run `python main.py --setup-check`: it shows "set (value hidden)" and never prints the password.
+
+**Security trade-off:** an App Password grants **full** access to the Google Account. Option B
+(`gmail.send` only) grants much less. If an App Password leaks, delete it on the same page and create
+a new one.
+
+Sending limits, approval, the auto-pause rules and the emergency stop are identical for both options.
+Gmail's limits are per account, so both options share the same counters.
+
+### Gmail option B: Gmail API with OAuth (one-time, preferred when possible)
 
 1. Go to [Google Cloud Console](https://console.cloud.google.com/) and create a project. Under
    **APIs & Services → Library**, enable the **Gmail API**.

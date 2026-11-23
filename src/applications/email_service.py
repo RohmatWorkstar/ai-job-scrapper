@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from email.message import EmailMessage
 from email.utils import formataddr, formatdate, make_msgid
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 
 from src.applications.contacts import validate_address
 from src.applications.gmail_client import DeliveryUnknownError, GmailAuthError, GmailClient, GmailError
@@ -127,6 +127,29 @@ class DryRunTransport:
         path = self.outbox / f"{stamp}.eml"
         path.write_bytes(msg.as_bytes())
         return TransportResult(message_id=f"dry-run:{path.name}", transport=self.name)
+
+
+def transport_kind(settings: Any) -> str:
+    """'smtp' (Gmail App Password) or 'gmail_api' (OAuth). 'auto' picks SMTP when an App Password is set."""
+    import os
+
+    kind = str(settings.get("applications.sending.transport", "auto") or "auto").lower()
+    if kind in ("smtp", "gmail_api"):
+        return kind
+    return "smtp" if os.environ.get("GMAIL_APP_PASSWORD", "").strip() else "gmail_api"
+
+
+class SmtpTransport:
+    """Gmail via SMTP + App Password. Same "gmail" counters: Gmail's limits are shared per account."""
+
+    name = "gmail"
+
+    def __init__(self, client: Any) -> None:
+        self.client = client
+
+    async def send(self, msg: EmailMessage) -> TransportResult:
+        await self.client.send(msg)
+        return TransportResult(message_id=str(msg["Message-ID"]), transport="gmail_smtp")
 
 
 class GmailTransport:

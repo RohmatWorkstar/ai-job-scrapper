@@ -6,7 +6,10 @@ import os
 from dataclasses import dataclass
 from typing import Any
 
+import re
+
 from src.applications.contacts import validate_address
+from src.applications.email_service import transport_kind
 from src.applications.gmail_client import GmailAuth
 from src.applications.sending_limits import SendingLimits
 from src.core.configuration import Settings
@@ -72,6 +75,10 @@ def validate_applications_settings(settings: Settings) -> None:
     s = app.get("sending") or {}
     if str(s.get("mode", "manual")) not in ("manual", "scheduled", "automatic"):
         errors.append("applications.sending.mode must be manual, scheduled or automatic")
+    if str(s.get("transport", "auto")) not in ("auto", "smtp", "gmail_api"):
+        errors.append("applications.sending.transport must be auto, smtp or gmail_api")
+    if s.get("smtp_port", 587) not in (465, 587):
+        errors.append("applications.sending.smtp_port must be 587 (STARTTLS) or 465 (TLS)")
     _num(errors, s, "automatic_min_match_score", "applications.sending", 0, 100)
     _num(errors, s, "max_attachment_mb", "applications.sending", 0.1, 25)
     _num(errors, s, "max_send_attempts", "applications.sending", 1, 5)
@@ -119,10 +126,22 @@ def setup_checklist(settings: Settings, jobs_with_email: int | None = None) -> l
     sender = os.environ.get("GMAIL_SENDER_ADDRESS", "").strip()
     items.append(CheckItem("GMAIL_SENDER_ADDRESS in .env", bool(sender) and validate_address(sender)[0],
                            sender or "not set", "Add GMAIL_SENDER_ADDRESS=you@gmail.com to .env", "live"))
+    kind = transport_kind(settings)
+    items.append(CheckItem("Gmail transport", True, "SMTP with App Password" if kind == "smtp" else
+                           "Gmail API with OAuth (gmail.send)", "applications.sending.transport in settings.yaml",
+                           "live"))
+    if kind == "smtp":
+        pw = re.sub(r"\s+", "", os.environ.get("GMAIL_APP_PASSWORD", ""))
+        items.append(CheckItem("GMAIL_APP_PASSWORD in .env", len(pw) == 16,
+                               "set (value hidden)" if len(pw) == 16 else ("not set" if not pw else
+                                                                           f"wrong length ({len(pw)}, expected 16)"),
+                               "Create one at https://myaccount.google.com/apppasswords (needs 2-Step Verification) "
+                               "and put it in .env yourself - never share it", "live"))
+        return items + _ai_and_identity(settings)
     auth = GmailAuth.from_settings(settings)
     items.append(CheckItem("Gmail OAuth client file", auth.client_secret_file.exists(), str(auth.client_secret_file),
                            "Google Cloud Console: enable Gmail API, create a 'Desktop app' OAuth client, "
-                           "download the JSON to this path", "live"))
+                           "download the JSON to this path (or use an App Password: GMAIL_APP_PASSWORD)", "live"))
     items.append(CheckItem("Gmail authorisation token", auth.has_token(), str(auth.token_file),
                            "Run: python main.py --gmail-auth (again every 7 days while the app is in 'Testing')",
                            "live"))
@@ -134,6 +153,11 @@ def setup_checklist(settings: Settings, jobs_with_email: int | None = None) -> l
         libs = False
     items.append(CheckItem("Google auth libraries", libs, "installed" if libs else "missing",
                            "pip install -r requirements.txt", "live"))
+    return items + _ai_and_identity(settings)
+
+
+def _ai_and_identity(settings: Settings) -> list[CheckItem]:
+    items: list[CheckItem] = []
     ai_ok = settings.credentials.has_ai
     items.append(CheckItem("GEMINI_API_KEY (AI mode)", ai_ok, "set" if ai_ok else "not set - AI mode only reorders the CV",
                            "Add GEMINI_API_KEY to .env (https://aistudio.google.com/apikey)", "ai"))

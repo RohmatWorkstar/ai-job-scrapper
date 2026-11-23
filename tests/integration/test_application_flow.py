@@ -532,4 +532,17 @@ def test_cli_live_mode_requires_gmail_setup(settings, monkeypatch, tmp_path: Pat
     monkeypatch.setenv("GMAIL_SENDER_ADDRESS", "me@gmail.com")
     monkeypatch.delenv("GMAIL_TOKEN_FILE", raising=False)
     monkeypatch.delenv("GMAIL_CLIENT_SECRET_FILE", raising=False)
+    monkeypatch.delenv("GMAIL_APP_PASSWORD", raising=False)
     assert app_mod.run(["--send-queue", "--defaults"]) == 1  # not authorised -> clear error, nothing sent
+    monkeypatch.setenv("GMAIL_APP_PASSWORD", "too-short")
+    assert app_mod.run(["--send-queue", "--defaults"]) == 1  # SMTP chosen, incomplete password -> clear error
+
+
+def test_setup_check_for_smtp(settings, monkeypatch) -> None:
+    from src.applications.setup_check import setup_checklist
+
+    monkeypatch.setenv("GMAIL_APP_PASSWORD", "abcd efgh ijkl mnop")
+    monkeypatch.setenv("GMAIL_SENDER_ADDRESS", "me@gmail.com")
+    items = {i.name: i for i in setup_checklist(settings)}
+    assert items["GMAIL_APP_PASSWORD in .env"].ok and items["GMAIL_APP_PASSWORD in .env"].detail == "set (value hidden)"
+    assert "Gmail OAuth client file" not in items and "SMTP" in items["Gmail transport"].detail

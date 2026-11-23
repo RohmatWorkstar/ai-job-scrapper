@@ -722,3 +722,125 @@ def test_email_generator_template_and_ai_fallback(settings, cv_doc) -> None:
     good_ai, _ = fake_ai({"job application e-mail": {"subject": "Application: Backend Developer", "body": good_body}})
     ok = asyncio.run(EmailGenerator(settings, good_ai).ai_email(j, a, profile, doc, ["Node.js"]))
     assert ok.method == "ai" and ok.body.startswith("Dear Hiring Team") and "Kind regards,\nAndi Pratama" in ok.body
+
+
+# ---------------------------------------------------------------- Gmail SMTP
+class FakeSMTP:
+    """Stand-in for smtplib.SMTP. `script` is a list of actions, one per connection attempt."""
+
+    instances: list["FakeSMTP"] = []
+
+    def __init__(self, script: list[Any]) -> None:
+        self.script = script
+
+    def __call__(self, host: str, port: int, timeout: float = 0, **kw: Any) -> "FakeSMTP":
+        action = self.script.pop(0)
+        if isinstance(action, OSError):
+            raise action
+        conn = FakeSMTP(self.script)
+        conn.action, conn.calls, conn.host, conn.port = action, [], host, port
+        FakeSMTP.instances.append(conn)
+        return conn
+
+    def __enter__(self) -> "FakeSMTP":
+        return self
+
+    def __exit__(self, *a: Any) -> None:
+        return None
+
+    def ehlo(self) -> None:
+        self.calls.append("ehlo")
+
+    def starttls(self, context: Any = None) -> None:
+        self.calls.append("starttls")
+        assert context is not None and context.check_hostname
+
+    def login(self, user: str, password: str) -> None:
+        self.calls.append(("login", user, password))
+        if self.action == "auth_fail":
+            import smtplib
+            raise smtplib.SMTPAuthenticationError(535, b"5.7.8 Username and Password not accepted")
+
+    def send_message(self, msg: Any) -> dict:
+        import smtplib
+
+        self.calls.append("send")
+        a = self.action
+        if isinstance(a, tuple):
+            raise smtplib.SMTPDataError(a[0], a[1].encode())
+        if a == "refused":
+            raise smtplib.SMTPRecipientsRefused({"x@y.com": (550, b"5.1.1 user unknown")})
+        if a == "drop":
+            raise smtplib.SMTPServerDisconnected("connection lost")
+        return {}
+
+
+def _smtp(script: list[Any], attempts: int = 3):
+    from src.applications.smtp_client import SmtpClient
+
+    async def no_sleep(_: float) -> None:
+        return None
+
+    FakeSMTP.instances = []
+    return SmtpClient("me@gmail.com", "abcd efgh ijkl mnop", smtp_factory=FakeSMTP(script), max_attempts=attempts,
+                      sleep=no_sleep)
+
+
+def _msg():
+    from email.message import EmailMessage
+
+    m = EmailMessage()
+    m["From"], m["To"], m["Subject"] = "me@gmail.com", "jobs@acme.co.id", "Application"
+    m.set_content("hello")
+    return m
+
+
+def test_smtp_success_uses_starttls_and_strips_password_spaces() -> None:
+    client = _smtp(["ok"])
+    asyncio.run(client.send(_msg()))
+    conn = FakeSMTP.instances[0]
+    assert (conn.host, conn.port) == ("smtp.gmail.com", 587)
+    assert conn.calls[:3] == ["ehlo", "starttls", "ehlo"] and conn.calls[3] == ("login", "me@gmail.com", "abcdefghijklmnop")
+    assert "abcd" not in repr(client)
+    from src.utils.logger import redact
+    assert "abcdefghijklmnop" not in redact("pw=abcdefghijklmnop")
+
+
+@pytest.mark.parametrize("action,exc,connections", [
+    ("auth_fail", GmailAuthError, 1),
+    ((550, "5.4.5 Daily user sending limit exceeded"), GmailSendingLimitError, 1),
+    ((421, "4.7.0 Try again later, closing connection"), GmailQuotaError, 1),
+    ((550, "5.7.1 Our system has detected an unusual rate of unsolicited mail"), GmailPolicyError, 1),
+    ("refused", GmailRequestError, 1),
+    ("drop", DeliveryUnknownError, 1),
+])
+def test_smtp_errors_are_not_retried(action: Any, exc: type, connections: int) -> None:
+    client = _smtp([action, "ok", "ok"])
+    with pytest.raises(exc) as e:
+        asyncio.run(client.send(_msg()))
+    assert len(FakeSMTP.instances) == connections
+    if action == "refused":
+        assert "invalid recipient" in str(e.value)
+
+
+def test_smtp_transient_errors_are_retried() -> None:
+    client = _smtp([ConnectionRefusedError("down"), (451, "4.3.0 Mail server temporarily rejected"), "ok"])
+    asyncio.run(client.send(_msg()))
+    assert len(FakeSMTP.instances) == 2  # connect failure + 451, then success
+    client = _smtp([(451, "4.3.0 temp")] * 3)
+    with pytest.raises(GmailTransientError):
+        asyncio.run(client.send(_msg()))
+
+
+def test_smtp_requires_full_app_password(monkeypatch: pytest.MonkeyPatch, settings) -> None:
+    from src.applications.email_service import transport_kind
+    from src.applications.smtp_client import SmtpClient
+
+    with pytest.raises(GmailAuthError, match="GMAIL_APP_PASSWORD"):
+        SmtpClient("me@gmail.com", "short")
+    monkeypatch.delenv("GMAIL_APP_PASSWORD", raising=False)
+    assert transport_kind(settings) == "gmail_api"
+    monkeypatch.setenv("GMAIL_APP_PASSWORD", "abcd efgh ijkl mnop")
+    assert transport_kind(settings) == "smtp"
+    settings.raw["applications"]["sending"]["transport"] = "gmail_api"
+    assert transport_kind(settings) == "gmail_api"

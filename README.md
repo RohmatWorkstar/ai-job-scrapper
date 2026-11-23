@@ -321,6 +321,7 @@ python main.py --applications                  # application history
 python main.py --sending-status                # counters, limits, pause / emergency-stop state
 python main.py --emergency-stop                # block all sending immediately (--resume-sending to clear)
 python main.py --gmail-auth                    # one-time Gmail OAuth consent (gmail.send scope only)
+                                               # or: GMAIL_APP_PASSWORD in .env -> sends via smtp.gmail.com
 ```
 
 **Dry run is the default.** `applications.sending.dry_run: true` writes `.eml` files to

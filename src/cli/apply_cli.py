@@ -23,8 +23,11 @@ from src.applications.email_service import (
     EmailService,
     GmailTransport,
     MailTransport,
+    SmtpTransport,
     attachment_name,
+    transport_kind,
 )
+from src.applications.smtp_client import SmtpClient
 from src.applications.gmail_client import GmailAuth, GmailAuthError, GmailClient
 from src.applications.manager import ApplicationManager, PrepareSummary
 from src.applications.models import ApplicationMode, ApplicationRecord, ApplicationStatus
@@ -59,13 +62,18 @@ def build_transport(settings: Settings, dry_run: bool) -> tuple[MailTransport, s
         return DryRunTransport(outbox), sender
     sender = os.environ.get("GMAIL_SENDER_ADDRESS", "").strip()
     if not sender:
-        raise JobIntelError("GMAIL_SENDER_ADDRESS is not set in .env (the Gmail address you authorised).")
+        raise JobIntelError("GMAIL_SENDER_ADDRESS is not set in .env (the Gmail address you send from).")
+    s = settings.get("applications.sending", {}) or {}
+    attempts, backoff = int(s.get("max_send_attempts", 3)), float(s.get("backoff_base_seconds", 2))
+    if transport_kind(settings) == "smtp":
+        client = SmtpClient(sender, os.environ.get("GMAIL_APP_PASSWORD", ""),
+                            port=int(s.get("smtp_port", 587)), max_attempts=attempts, backoff_base=backoff)
+        return SmtpTransport(client), sender
     auth = GmailAuth.from_settings(settings)
     if not auth.has_token():
-        raise GmailAuthError("Gmail is not authorised yet. Run: python main.py --gmail-auth")
-    s = settings.get("applications.sending", {}) or {}
-    client = GmailClient(lambda force: auth.access_token(force), max_attempts=int(s.get("max_send_attempts", 3)),
-                         backoff_base=float(s.get("backoff_base_seconds", 2)))
+        raise GmailAuthError("Gmail is not authorised yet. Run: python main.py --gmail-auth "
+                             "(or use an App Password: GMAIL_APP_PASSWORD in .env)")
+    client = GmailClient(lambda force: auth.access_token(force), max_attempts=attempts, backoff_base=backoff)
     return GmailTransport(client), sender
 
 

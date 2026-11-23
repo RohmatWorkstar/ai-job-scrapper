@@ -226,6 +226,12 @@ applications:
     # Set it to false only after checking the outbox and authorising Gmail (--gmail-auth).
     dry_run: true
     outbox_directory: data/outbox
+    # How real e-mails reach Gmail:
+    #   auto      - SMTP when GMAIL_APP_PASSWORD is set in .env, otherwise the Gmail API (OAuth)
+    #   smtp      - smtp.gmail.com with an App Password (no Google Cloud project needed)
+    #   gmail_api - Gmail API with OAuth, gmail.send scope only (most restricted access; preferred)
+    transport: auto
+    smtp_port: 587                   # 587 = STARTTLS, 465 = implicit TLS
     mode: manual                     # manual (default) | scheduled | automatic
     automatic_enabled: false         # automatic mode also needs mode: automatic AND the --auto flag
     automatic_min_match_score: 75

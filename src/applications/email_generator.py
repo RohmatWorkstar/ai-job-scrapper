@@ -90,10 +90,11 @@ class EmailGenerator:
         if years and years >= 1:
             y = int(years)
             more = years - y >= 0.25  # "over 4 years" only when it really is more than 4
+            plus = bool(doc and re.search(rf"(?<!\d){y}\s*\+\s*(?:years?|yrs?|tahun)", doc.source_text, re.I))
             if indonesian:
-                years_phrase = f" dengan pengalaman {'lebih dari ' if more else ''}{y} tahun"
+                years_phrase = f" dengan pengalaman {y}+ tahun" if plus else                     f" dengan pengalaman {'lebih dari ' if more else ''}{y} tahun"
             else:
-                years_phrase = f" with {'over ' if more else ''}{y} year{'s' if y != 1 else ''} of experience"
+                years_phrase = f" with {y}+ years of experience" if plus else                     f" with {'over ' if more else ''}{y} year{'s' if y != 1 else ''} of experience"
         cv_skills = {s.lower() for s in profile.skills}
         skills = [s for s in (matched_skills or []) if s.lower() in cv_skills][:4]
         if not skills:

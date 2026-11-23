@@ -72,6 +72,28 @@ def _parse_pdf(path: Path) -> tuple[str, int, list[str]]:
     return text, page_count, warnings
 
 
+def _pdf_links(path: Path) -> list[str]:
+    """http(s) hyperlink targets in a PDF (e.g. "GitHub" / "LinkedIn" labels that hide the URL)."""
+    try:
+        import pymupdf
+    except ImportError:  # pragma: no cover
+        import fitz as pymupdf  # type: ignore[no-redef]
+    out: list[str] = []
+    try:
+        doc = pymupdf.open(str(path))
+        try:
+            for page in doc:
+                for link in page.get_links():
+                    uri = str(link.get("uri") or "").strip()
+                    if uri.lower().startswith(("http://", "https://")) and uri not in out:
+                        out.append(uri)
+        finally:
+            doc.close()
+    except Exception:  # noqa: BLE001 - links are optional
+        return []
+    return out[:10]
+
+
 def _parse_docx(path: Path) -> tuple[str, int, list[str]]:
     try:
         import docx
@@ -176,10 +198,12 @@ def parse_cv(path: Path) -> ParsedCV:
         raise CVError(f"'{path.name}' is larger than 15 MB.")
     data = path.read_bytes()
     sha = hashlib.sha256(data).hexdigest()
+    links: list[str] = []
     if suffix == ".pdf":
         if not data.startswith(b"%PDF"):
             raise CVError(f"'{path.name}' is not a valid PDF file.")
         text, pages, warnings = _parse_pdf(path)
+        links = _pdf_links(path)
     elif suffix == ".docx":
         if not data.startswith(b"PK"):
             raise CVError(f"'{path.name}' is not a valid DOCX file.")
@@ -190,5 +214,5 @@ def parse_cv(path: Path) -> ParsedCV:
         text, pages, warnings = _parse_doc(path)
     else:
         text, pages, warnings = _parse_txt(path)
-    return ParsedCV(filename=path.name, file_format=suffix[1:], text=_normalise(text), pages=pages, sha256=sha,
+    return ParsedCV(filename=path.name, file_format=suffix[1:], text=_normalise(text), pages=pages, sha256=sha, links=links,
                     warnings=warnings)

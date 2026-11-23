@@ -154,7 +154,7 @@ def test_dry_run_transport_writes_eml(env) -> None:
     assert parsed["To"] == "jobs@c0.co.id" and parsed.is_multipart()
     # A dry run is a rehearsal: never SENT, approval withdrawn, still sendable for real later.
     assert after.status == "PENDING_APPROVAL" and after.approved_hash is None and after.send_lock is None
-    assert any("Dry run done" in n for n in after.notes)
+    assert any("Rehearsal done" in n for n in after.notes)
     new_record_blocked = pytest.raises(DuplicateApplicationError)
     with new_record_blocked:  # still the active application for this job: no second record
         new_record(tr, env["pdf"], company="Company 0", recipient="jobs@c0.co.id")
@@ -546,3 +546,20 @@ def test_setup_check_for_smtp(settings, monkeypatch) -> None:
     items = {i.name: i for i in setup_checklist(settings)}
     assert items["GMAIL_APP_PASSWORD in .env"].ok and items["GMAIL_APP_PASSWORD in .env"].detail == "set (value hidden)"
     assert "Gmail OAuth client file" not in items and "SMTP" in items["Gmail transport"].detail
+
+
+def test_test_recipient_redirect_never_reaches_employer(env) -> None:
+    from src.applications.email_service import TestRedirectTransport
+
+    tr = env["tracker"]
+    redirect = TestRedirectTransport(env["transport"], "tester@example-inbox.com")
+    service = EmailService(tr, env["guard"], redirect, sender="me@gmail.com", sender_name="Andi Pratama")
+    rec = approved(tr, env["pdf"])
+    after = asyncio.run(service.send_application(rec.id))
+    msg = env["transport"].sent[0]
+    assert msg["To"] == "tester@example-inbox.com" and "jobs@c0.co.id" not in str(msg["To"])
+    assert msg["Subject"].startswith("[TEST for jobs@c0.co.id] ") and msg["X-Original-To"] == "jobs@c0.co.id"
+    assert after.status == "PENDING_APPROVAL" and "test->tester@example-inbox.com" in after.transport
+    assert env["tracker"].last_attempts(1, transport="mock")[0]["outcome"] == "sent"  # real Gmail counters used
+    msg_text = SendingScheduler._describe(after)
+    assert msg_text.startswith("TEST:") and "employer received nothing" in msg_text

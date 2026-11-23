@@ -19,7 +19,7 @@ from src.cv.analyzer import _RANGE_RE, ROLE_WORDS, Sections, split_sections
 from src.cv.models import CandidateProfile, ParsedCV
 from src.extraction.contact_parser import EMAIL_RE
 
-_BULLET = re.compile(r"^\s*[•\-\*–·▪●◦»]\s*")
+_BULLET = re.compile(r"^\s*[•\-\*–·▪●◦»▸►‣⁃◆■➢➤✓✔→]\s*")
 _PHONE = re.compile(r"(?<![\w/])\+?\d[\d\s().-]{7,}\d(?![\w/])")
 _LINK = re.compile(r"(?i)\b(?:https?://\S+|(?:www\.)?(?:linkedin\.com|github\.com|gitlab\.com)/\S+)")
 _SPLIT_TITLE = re.compile(r"\s+(?:-|–|—|at|@|\|)\s+|,\s+")
@@ -46,6 +46,10 @@ class CVDocument:
     projects: list[str] = field(default_factory=list)
     certifications: list[str] = field(default_factory=list)
     languages: list[str] = field(default_factory=list)
+    # Structured variants (used for rendering when the CV has them): projects with bullets, and
+    # skill groups as written in the CV ("Backend: Node.js, NestJS, ...").
+    project_entries: list[ExperienceEntry] = field(default_factory=list)
+    skill_groups: list[tuple[str, list[str]]] = field(default_factory=list)
     method: str = "deterministic"
     notes: list[str] = field(default_factory=list)
     source_text: str = ""
@@ -70,13 +74,24 @@ class CVDocument:
 
 
 # ------------------------------------------------------------------ identity
-def extract_identity(text: str, profile: CandidateProfile | None = None) -> CandidateIdentity:
+def _nice_name(name: str) -> str:
+    """'ROHMAT SUPRIYADI' -> 'Rohmat Supriyadi' (only when the CV writes the name in capitals)."""
+    return " ".join(w.capitalize() for w in name.split()) if name.isupper() else name
+
+
+def display_link(url: str) -> str:
+    u = re.sub(r"^https?://(www\.)?", "", url.strip()).split("?", 1)[0].split("#", 1)[0]
+    return u.rstrip("/")
+
+
+def extract_identity(text: str, profile: CandidateProfile | None = None,
+                     file_links: list[str] | None = None) -> CandidateIdentity:
     header = [l.strip() for l in text.splitlines()[:12] if l.strip()]
     ident = CandidateIdentity()
     for line in header[:3]:
         words = line.split()
         if 2 <= len(words) <= 5 and not re.search(r"[\d@|/:]", line) and not ROLE_WORDS.search(line):
-            ident.name = line.strip()
+            ident.name = _nice_name(line.strip())
             break
     joined = "\n".join(header)
     m = EMAIL_RE.search(joined)
@@ -85,7 +100,9 @@ def extract_identity(text: str, profile: CandidateProfile | None = None) -> Cand
         if not re.fullmatch(r"\d{4}\s*[-–]\s*\d{4}", pm.group(0).strip()):
             ident.phone = pm.group(0).strip()
             break
-    ident.links = list(dict.fromkeys(l.group(0).rstrip(".,;") for l in _LINK.finditer(joined)))[:3]
+    text_links = [l.group(0).rstrip(".,;") for l in _LINK.finditer(joined)]
+    ident.links = list(dict.fromkeys(display_link(u) for u in (file_links or []) + text_links
+                                     if not u.lower().startswith("mailto:")))[:4]
     ident.location = (profile.location if profile else "") or ""
     for line in header[1:4]:
         for seg in re.split(r"\s*\|\s*", line):
@@ -114,24 +131,38 @@ def _split_title_company(line: str) -> tuple[str, str]:
 
 
 def parse_experience(section: str) -> list[ExperienceEntry]:
+    """Split an experience/projects section into entries with bullets.
+
+    * Bulleted CVs: every non-bullet line that is not a wrapped continuation is an entry header.
+    * Unbulleted CVs: a header is a short line with role words or followed by a date line.
+    * Wrapped lines (indented, or starting lower-case / with punctuation) continue the previous bullet.
+    """
     entries: list[ExperienceEntry] = []
     cur: ExperienceEntry | None = None
     lines = [l.rstrip() for l in section.splitlines()]
+    bulleted = sum(1 for l in lines if _BULLET.match(l.strip())) >= 2
     for i, raw in enumerate(lines):
         line = raw.strip()
         if not line:
             continue
         is_bullet = bool(_BULLET.match(line))
+        continuation = not is_bullet and (raw[:1].isspace() or line[:1].islower() or line[:1] in "(,;&")
+        if continuation and cur is not None and cur.bullets:
+            cur.bullets[-1] = f"{cur.bullets[-1]} {line}"
+            continue
         text = _BULLET.sub("", line).strip()
         rng = _RANGE_RE.search(text)
-        rest = _RANGE_RE.sub("", text).strip(" ,|-–()") if rng else text
+        rest = _RANGE_RE.sub("", text).strip(" ,|-–—()") if rng else text
         if not is_bullet and rng and len(rest) < 4 and cur is not None:
             cur.dates = rng.group(0).strip()
             continue
-        next_line = next((l.strip() for l in lines[i + 1:] if l.strip()), "")
-        header_like = (not is_bullet and len(text) <= 120 and not text.endswith(".") and
-                       (ROLE_WORDS.search(rest) is not None or (bool(_RANGE_RE.search(next_line)) and
-                                                               len(_RANGE_RE.sub("", next_line).strip()) < 4)))
+        if bulleted:
+            header_like = not is_bullet and len(text) <= 160
+        else:
+            next_line = next((l.strip() for l in lines[i + 1:] if l.strip()), "")
+            header_like = (not is_bullet and len(text) <= 120 and not text.endswith(".") and
+                           (ROLE_WORDS.search(rest) is not None or (bool(_RANGE_RE.search(next_line)) and
+                                                                   len(_RANGE_RE.sub("", next_line).strip()) < 4)))
         if header_like:
             title, company = _split_title_company(rest)
             cur = ExperienceEntry(title=title, company=company, dates=rng.group(0).strip() if rng else "")
@@ -140,48 +171,125 @@ def parse_experience(section: str) -> list[ExperienceEntry]:
         if cur is None:
             cur = ExperienceEntry()
             entries.append(cur)
-        if not is_bullet and cur.bullets and text[:1].islower():
-            cur.bullets[-1] = f"{cur.bullets[-1]} {text}"
-        else:
-            cur.bullets.append(text)
+        cur.bullets.append(text)
     return [e for e in entries if e.title or e.bullets]
 
 
+def _split_outside_parens(text: str) -> list[str]:
+    out, depth, buf = [], 0, ""
+    for ch in text:
+        if ch == "(":
+            depth += 1
+        elif ch == ")" and depth > 0:
+            depth -= 1
+        if depth == 0 and ch in ",;•|":
+            out.append(buf)
+            buf = ""
+        else:
+            buf += ch
+    out.append(buf)
+    return [x.strip(" .") for x in out if x.strip(" .")]
+
+
+_GROUP_LABEL = re.compile(r"(?i)\b(languages?|frontend|front-end|backend|back-end|database|databases|tools?|devops|"
+                          r"cloud|api|ui/ux|frameworks?|testing|mobile|data|others?|skills?|cms|integration|"
+                          r"performance|libraries)\b")
+
+
+def parse_skills(section: str, detector: Any) -> list[tuple[str, list[str]]]:
+    """'Backend Node.js, Express.js, NestJS' -> ('Backend', ['Node.js', 'Express.js', 'NestJS']).
+
+    Wrapped lines are joined first. A leading label is the text before the first recognised skill
+    (or explicit "Label:" text), only when it looks like a category name.
+    """
+    logical: list[str] = []
+    for raw in section.splitlines():
+        if not raw.strip():
+            continue
+        if logical and (raw[:1].isspace() or raw.strip()[:1].islower()):
+            logical[-1] += " " + raw.strip()
+        else:
+            logical.append(_BULLET.sub("", raw.strip()))
+    groups: list[tuple[str, list[str]]] = []
+    for line in logical:
+        label = ""
+        head = line.split(",", 1)[0]
+        if ":" in head:
+            label, line = line.split(":", 1)
+        elif detector is not None:
+            low = line.lower()
+            positions = [low.find(h.name.lower()) for h in detector.detect(head)]
+            positions += [m.start() for m in re.finditer(r"\b[A-Z][\w.+#-]*\.js\b", head)]
+            first = min((p for p in positions if p > 0), default=-1)
+            if first > 0 and len(line[:first].split()) <= 4 and _GROUP_LABEL.search(line[:first]):
+                label, line = line[:first], line[first:]
+        items = [i for i in _split_outside_parens(line) if 1 <= len(i) <= 60]
+        if items:
+            groups.append((label.strip(" :-"), items))
+    return groups
+
+
 def _items(section: str, limit: int, max_len: int = 200) -> list[str]:
+    """One item per logical line (wrapped/indented lines are joined to the previous one)."""
     out: list[str] = []
-    for line in section.splitlines():
-        l = _BULLET.sub("", line).strip()
-        if 3 <= len(l) <= max_len and l not in out:
+    for raw in section.splitlines():
+        l = _BULLET.sub("", raw.strip()).strip()
+        if not l:
+            continue
+        if out and (raw[:1].isspace() or l[:1].islower()):
+            out[-1] = f"{out[-1]} {l}"
+        elif l not in out:
             out.append(l)
-    return out[:limit]
+    return [o for o in out if 3 <= len(o) <= max_len][:limit]
 
 
-def structure_cv(cv: ParsedCV, profile: CandidateProfile) -> CVDocument:
+def structure_cv(cv: ParsedCV, profile: CandidateProfile, detector: Any = None) -> CVDocument:
     sections: Sections = split_sections(cv.text)
     by = sections.by_name
+    groups = parse_skills(by.get("skills", ""), detector or _default_detector())
     skills = list(profile.skills)
     lower = {s.lower() for s in skills}
-    for item in _LIST_SPLIT.split(by.get("skills", "")):
-        item = _BULLET.sub("", item).strip(" .")
-        if 2 <= len(item) <= 40 and item.lower() not in lower:
-            skills.append(item)
-            lower.add(item.lower())
+    for _, items in groups:
+        for item in items:
+            if item.lower() not in lower:
+                skills.append(item)
+                lower.add(item.lower())
+    projects = parse_experience(by.get("projects", ""))
+    project_names = [" - ".join(v for v in (p.title, p.company) if v) for p in projects if p.title]
     doc = CVDocument(
-        identity=extract_identity(cv.text, profile),
+        identity=extract_identity(cv.text, profile, getattr(cv, "links", None)),
         headline=profile.current_title,
         summary=" ".join(l.strip() for l in by.get("summary", "").splitlines() if l.strip()),
         experience=parse_experience(by.get("experience", "")),
         skills=skills,
         education=_items(by.get("education", ""), 6) or list(profile.education),
-        projects=_items(by.get("projects", ""), 8) or list(profile.projects),
+        projects=project_names or _items(by.get("projects", ""), 8) or list(profile.projects),
         certifications=_items(by.get("certifications", ""), 10) or list(profile.certifications),
         languages=_items(by.get("languages", ""), 5) or list(profile.languages),
+        project_entries=[p for p in projects if p.title and p.bullets],
+        skill_groups=groups,
         source_text=cv.text,
         source_sha256=cv.sha256,
     )
     if not doc.experience:
         doc.notes.append("No work-experience entries could be segmented from the CV text.")
     return doc
+
+
+_DETECTOR: list[Any] = []
+
+
+def _default_detector() -> Any:
+    """SkillDetector over the project taxonomy (loaded once); None if unavailable."""
+    if not _DETECTOR:
+        try:
+            from src.core.configuration import load_settings
+            from src.extraction.content_parser import SkillDetector
+
+            _DETECTOR.append(SkillDetector(load_settings(load_env=False).taxonomy))
+        except Exception:  # noqa: BLE001 - grouping degrades gracefully
+            _DETECTOR.append(None)
+    return _DETECTOR[0]
 
 
 def _verbatim_norm(text: str) -> str:

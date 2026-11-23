@@ -203,7 +203,11 @@ applications:
     allowed_relevance_categories: [HIGHLY RELEVANT, RELEVANT]
     excluded_verification_statuses: [CLOSED, POSSIBLE_SCAM, INACCESSIBLE]
     title_include_keywords: []                    # e.g. [developer, engineer]; empty = any title
-    title_exclude_keywords: [intern, internship, magang, sales, director, head of]
+    title_exclude_keywords: [intern, internship, magang, stagiair, stagiaire, praktikant, praktikum, werkstudent,
+                             sales, director, head of,
+                             m/w/d, w/m/d, m/f/d, f/m/d]   # German-market postings (German + local permit)
+    allow_onsite_abroad: false                    # skip onsite/hybrid roles outside candidate.home_country
+    max_seniority_gap: 1                          # skip roles more than this many levels above your level; null = off
     exclude_companies: []
     allowed_employment_types: []                  # e.g. [full_time, contract]; empty = any
     max_posting_age_days: 45
@@ -232,6 +236,9 @@ applications:
     #   gmail_api - Gmail API with OAuth, gmail.send scope only (most restricted access; preferred)
     transport: auto
     smtp_port: 587                   # 587 = STARTTLS, 465 = implicit TLS
+    # End-to-end test: send every e-mail for real, but only to this address you own (or set
+    # APPLICATION_TEST_RECIPIENT in .env). Employers receive nothing; applications return to review.
+    test_recipient: ""
     mode: manual                     # manual (default) | scheduled | automatic
     automatic_enabled: false         # automatic mode also needs mode: automatic AND the --auto flag
     automatic_min_match_score: 75

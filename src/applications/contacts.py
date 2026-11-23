@@ -14,7 +14,8 @@ from src.core.models import JobOpportunity
 from src.extraction.contact_parser import EMAIL_RE
 
 NO_REPLY = re.compile(r"(?i)^(no[-_.]?reply|do[-_.]?not[-_.]?reply|mailer[-_.]?daemon|postmaster|bounce[s]?|"
-                      r"notifications?|abuse|privacy|security|unsubscribe|support|billing|press|media|legal|webmaster)@")
+                      r"notifications?|abuse|privacy|security|unsubscribe|support|billing|press|media|legal|webmaster|"
+                      r"[\w.-]*accommodat[\w.-]*|[\w.-]*accessib[\w.-]*|askpeople|fraud|compliance|dpo)@")
 PLATFORM_DOMAINS = {
     "linkedin.com", "jobstreet.com", "jobstreet.co.id", "glints.com", "kalibrr.com", "indeed.com", "glassdoor.com",
     "greenhouse.io", "lever.co", "ashbyhq.com", "smartrecruiters.com", "workday.com", "myworkday.com",

@@ -8,6 +8,7 @@ from typing import Any
 
 from src.core.configuration import Settings
 from src.core.models import JobOpportunity
+from src.extraction.content_parser import SENIORITY_ORDER
 from src.utils.date_time import age_days
 
 
@@ -26,7 +27,8 @@ def _kw_match(text: str, keywords: list[str]) -> str | None:
 
 
 class EligibilityFilter:
-    def __init__(self, settings: Settings, overrides: dict[str, Any] | None = None) -> None:
+    def __init__(self, settings: Settings, overrides: dict[str, Any] | None = None,
+                 candidate_seniority: str | None = None) -> None:
         cfg = dict(settings.get("applications.eligibility", {}) or {})
         cfg.update(overrides or {})
         self.min_score = float(cfg.get("min_relevance_score", 58))
@@ -39,6 +41,11 @@ class EligibilityFilter:
         self.employment_types = list(cfg.get("allowed_employment_types", []) or [])
         self.max_age_days = cfg.get("max_posting_age_days", 45)
         self.require_email = bool(cfg.get("require_email", True))
+        self.onsite_abroad = bool(cfg.get("allow_onsite_abroad", False))
+        self.home_country = str(settings.get("candidate.home_country", "Indonesia") or "")
+        gap = cfg.get("max_seniority_gap", 1)
+        self.max_seniority_gap = None if gap is None else int(gap)
+        self.candidate_seniority = candidate_seniority
 
     def evaluate(self, job: JobOpportunity) -> EligibilityResult:
         r = EligibilityResult(True)
@@ -72,4 +79,13 @@ class EligibilityFilter:
                 fail(f"Posting is {age:.0f} days old (max {self.max_age_days}).")
         if self.require_email and not job.application_emails:
             fail("No application e-mail address in the posting.")
+        if not self.onsite_abroad and self.home_country and job.work_arrangement in ("onsite", "hybrid")                 and job.country and job.country.lower() != self.home_country.lower():
+            fail(f"{job.work_arrangement.capitalize()} role in {job.country} (outside {self.home_country}); "
+                 "set allow_onsite_abroad: true to include it.")
+        cand, lvl = self.candidate_seniority, job.seniority
+        if self.max_seniority_gap is not None and cand in SENIORITY_ORDER and lvl in SENIORITY_ORDER:
+            gap = SENIORITY_ORDER.index(lvl) - SENIORITY_ORDER.index(cand)
+            if gap > self.max_seniority_gap:
+                fail(f"Role level '{lvl}' is {gap} levels above your estimated level '{cand}' "
+                     f"(max_seniority_gap={self.max_seniority_gap}).")
         return r

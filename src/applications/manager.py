@@ -105,7 +105,8 @@ class ApplicationManager:
         except AttachmentError as exc:
             raise AttachmentError(f"Basic mode needs your original CV as a PDF: {exc}") from exc
         cv_sha = file_sha256(str(cv_pdf))
-        filt = EligibilityFilter(self.settings, eligibility_overrides)
+        filt = EligibilityFilter(self.settings, eligibility_overrides,
+                                candidate_seniority=self.profile.seniority_estimate)
         summary = PrepareSummary()
         limit = limit or int(self.settings.get("applications.max_jobs_per_run", 30))
         for job in jobs:

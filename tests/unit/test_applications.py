@@ -110,14 +110,12 @@ def test_find_emails_ranks_application_context_and_deobfuscates() -> None:
     text = ("Questions? press@acme.com.\nKirim CV dan lamaran ke hrd@acme.co.id paling lambat 30 Nov.\n"
             "Or apply: jobs [at] acme [dot] com")
     out = find_emails(text)
-    assert out[0] in ("hrd@acme.co.id", "jobs@acme.com")
-    assert set(out) == {"press@acme.com", "hrd@acme.co.id", "jobs@acme.com"}
-    assert out[-1] == "press@acme.com"
+    assert out == ["hrd@acme.co.id", "jobs@acme.com"]  # press@ ("Questions?") is not an application inbox
 
 
 def test_find_emails_mailto_first_and_decoded() -> None:
     out = find_emails("contact sales@x.io", mailto=["mailto:careers%40x.io?subject=Apply"])
-    assert out == ["careers@x.io", "sales@x.io"]
+    assert out == ["careers@x.io"]  # sales@ has no application instruction
 
 
 def test_html_extractor_collects_mailto_links() -> None:
@@ -636,7 +634,8 @@ def test_cv_generator_deterministic_keeps_facts_and_renders_pdf(settings, cv_doc
     assert [e.title for e in tcv.experience] == [e.title for e in doc.experience]
     for a_e, d_e in zip(tcv.experience, doc.experience):
         assert sorted(a_e.bullets) == sorted(d_e.bullets)
-    assert sorted(tcv.skills) == sorted(doc.skills) and tcv.skills[:2] == ["PostgreSQL", "Docker"]
+    grouped = [i for _, items in doc.skill_groups for i in items]
+    assert sorted(tcv.skills) == sorted(grouped) and tcv.skills[:2] == ["PostgreSQL", "Docker"]
     assert tcv.headline == "Fullstack Developer"
     assert gen.validate_pdf(path, tcv) == []
     assert file_sha256(str(path))
@@ -844,3 +843,158 @@ def test_smtp_requires_full_app_password(monkeypatch: pytest.MonkeyPatch, settin
     assert transport_kind(settings) == "smtp"
     settings.raw["applications"]["sending"]["transport"] = "gmail_api"
     assert transport_kind(settings) == "gmail_api"
+
+
+
+REAL_NON_APPLICATION = {  # verbatim sentences from live postings (2026-11-23)
+    "servicenow": "If you require a reasonable accommodation to complete any part of the application process, or are "
+                  "unable to use this online application and need an alternative method to apply, please contact "
+                  "globaltalentss@servicenow.com for assistance.",
+    "clickup": "If you have questions or need an accommodation in the recruitment process, please contact us at "
+               "AskPeople@ClickUp.com. Please disregard any offers received outside these channels and report them "
+               "to support@clickup.com.",
+    "customerio": "Please be vigilant in all of your job search activity, and if you have any questions please "
+                  "contact jobs@customer.io.",
+    "arbor": "if you require any reasonable adjustments during your application or interview process, please reach "
+             "out to a member of the team at careers@arbor-education.com.",
+    "bosch": "If you still need assistance, please feel free to contact us at the following email address - "
+             "talentacquisitionhungary@bosch.com - We would be happy to help.",
+    "teamworks": "To request a reasonable accommodation, please email talent@teamworks.com.",
+    "airbnb": "If you are a candidate with a disability and require reasonable accommodation in order to submit an "
+              "application, please contact us at: reasonableaccommodations@airbnb.com .",
+}
+
+
+@pytest.mark.parametrize("name", sorted(REAL_NON_APPLICATION))
+def test_real_accommodation_and_help_addresses_are_not_application_inboxes(name: str) -> None:
+    assert find_emails(REAL_NON_APPLICATION[name]) == []
+
+
+@pytest.mark.parametrize("text,expected", [
+    ("Kirim CV dan surat lamaran ke hrd@pt-maju.co.id paling lambat 30 Desember.", ["hrd@pt-maju.co.id"]),
+    ("To apply, send your resume to careers@startup.io with the subject Backend.", ["careers@startup.io"]),
+    ("Acme | Backend Engineer | Remote | Apply: jobs@acme.dev", ["jobs@acme.dev"]),
+    ("Contact: recruitment@acme.co.id", ["recruitment@acme.co.id"]),
+    ("Send your CV to hr@x.co.id. Questions? hr@x.co.id or info@x.co.id", ["hr@x.co.id"]),
+])
+def test_application_inboxes_are_found(text: str, expected: list[str]) -> None:
+    assert find_emails(text) == expected
+
+
+def test_recipient_validation_rejects_accommodation_desks() -> None:
+    for addr in ("accommodations@coinbase.com", "candidate_accessibility@elastic.co", "askpeople@clickup.com"):
+        assert not validate_address(addr)[0]
+
+
+def test_domain_cap_is_per_address_for_freemail(tracker: ApplicationTracker) -> None:
+    from src.applications.sending_limits import recipient_key
+
+    assert recipient_key("hr.alpha@gmail.com") != recipient_key("hr.beta@gmail.com")
+    assert recipient_key("x+tag@gmail.com") == recipient_key("x@gmail.com") and recipient_key("a@acme.id") == "@acme.id"
+    clock = Clock()
+    g = SendingGuard(tracker, _limits(max_per_recipient_domain_per_day=1, max_per_hour=10, max_per_day=10),
+                     transport_name="mock", now=clock)
+    g.record("1", "sent", "hr.alpha@gmail.com")
+    clock.advance(61)
+    assert g.check("hr.beta@gmail.com").allowed          # different employer on gmail.com
+    assert g.check("hr.alpha@gmail.com").code == "domain_limit"
+    g.record("2", "sent", "jobs@acme.id")
+    clock.advance(61)
+    assert g.check("careers@acme.id").code == "domain_limit"  # same company domain
+
+
+MODERN_CV = """BUDI SANTOSO
+ Fullstack Engineer
+ budi@example.org | +62-811-0000-1111 | Website | GitHub
+
+PROFILE
+
+Fullstack Engineer with 3+ years of experience building web applications for
+thousands of users.
+
+PROFESSIONAL EXPERIENCE
+
+Developer Supervisor — PT Contoh Asuransi Mar 2025 – Present
+▸ Refined claim calculation logic and resolved overpayment bugs (reducing losses
+ by 80%), while automating processing for tens of thousands of records.
+▸ Led the engineering team building the HR system (React, Laravel, NestJS)
+ featuring payroll integration.
+
+Frontend Developer — PT Contoh Teknologi Aug 2023 – Dec 2023
+▸ Integrated maps into the WebGIS interface.
+▸ Developed robust backend REST APIs for real-time data synchronization between servers and user
+ interfaces.
+PROFESSIONAL PROJECTS
+
+PRISA — Digital Insurance Platform
+▸ Developed policy management and claim modules supporting >300 providers.
+▸ Enhanced performance through caching and background jobs.
+
+TECHNICAL SKILLS
+
+Programming Languages JavaScript, TypeScript, PHP, Python
+Backend Node.js, Express.js, NestJS, Laravel
+Database & Performance PostgreSQL, MySQL, Redis, Data Modeling, Query
+ Optimization, Caching
+UI/UX Figma (Wireframing, Prototyping), Material Design
+
+EDUCATION
+
+B.Sc. in Information Technology — Universitas Contoh 2017 – 2021 | GPA: 3.90 / 4.00
+"""
+
+
+def test_modern_bulleted_cv_is_structured(settings, tmp_path: Path) -> None:
+    from src.cv.models import ParsedCV
+
+    cv = ParsedCV(filename="cv.txt", file_format="txt", text=MODERN_CV, pages=1, sha256="x",
+                  links=["mailto:budi@example.org", "https://github.com/budi-example?tab=repos"])
+    profile = CVAnalyzer(settings).analyze(cv)
+    assert profile.experience_years >= 3.0  # explicit "3+ years" is used when date ranges add up to less
+    doc = structure_cv(cv, profile)
+    assert doc.identity.name == "Budi Santoso" and doc.identity.links == ["github.com/budi-example"]
+    assert [(e.title, e.company) for e in doc.experience] == [("Developer Supervisor", "PT Contoh Asuransi"),
+                                                               ("Frontend Developer", "PT Contoh Teknologi")]
+    assert len(doc.experience[0].bullets) == 2 and doc.experience[0].bullets[0].endswith("tens of thousands of records.")
+    assert doc.experience[1].bullets[1].endswith("between servers and user interfaces.")
+    assert [(p.title, p.company, len(p.bullets)) for p in doc.project_entries] == [("PRISA", "Digital Insurance Platform", 2)]
+    groups = dict(doc.skill_groups)
+    assert groups["Programming Languages"] == ["JavaScript", "TypeScript", "PHP", "Python"]
+    assert "Query Optimization" in groups["Database & Performance"]
+    assert groups["UI/UX"][0] == "Figma (Wireframing, Prototyping)"
+    j = job(job_title="Backend Engineer", required_skills=["PostgreSQL", "NestJS"])
+    a = JobAnalyzer(settings).analyze_deterministic(j)
+    m = CVMatcher(settings, profile).match(j, a, doc)
+    settings.raw["applications"]["generated_cv_directory"] = str(tmp_path)
+    tcv, path = asyncio.run(CVGenerator(settings).generate(doc, a, m, company="Acme", title="Backend Engineer", app_id="a1"))
+    import pymupdf
+    text = pymupdf.open(str(path))[0].get_text()
+    assert "Backend:" in text and "Programming Languages:" in text and "PRISA - Digital Insurance Platform" in text
+    assert tcv.skill_groups[0][0] in ("Backend", "Database & Performance")  # job-relevant group first
+    e = EmailGenerator(settings).template_email(j, profile, doc.identity, doc=doc)
+    assert "with 3+ years of experience" in e.body and "Budi Santoso" in e.subject
+
+
+def test_eligibility_skips_onsite_abroad_and_german_market(settings) -> None:
+    f = EligibilityFilter(settings)
+    assert not f.evaluate(job(country="United States", work_arrangement="onsite")).eligible
+    assert f.evaluate(job(country="United States", work_arrangement="remote")).eligible
+    assert f.evaluate(job(country="Indonesia", work_arrangement="onsite")).eligible
+    assert not f.evaluate(job(job_title="Frontend Developer (m/w/d)")).eligible
+    assert EligibilityFilter(settings, {"allow_onsite_abroad": True}).evaluate(
+        job(country="United States", work_arrangement="onsite")).eligible
+    g = EligibilityFilter(settings, candidate_seniority="junior")
+    assert not g.evaluate(job(seniority="senior")).eligible and g.evaluate(job(seniority="mid")).eligible
+
+
+def test_alias_skill_counts_as_matched(settings) -> None:
+    from src.cv.models import ParsedCV
+
+    cv = ParsedCV(filename="cv.txt", file_format="txt", pages=1, sha256="y",
+                  text=MODERN_CV.replace("JavaScript, TypeScript, PHP, Python", "JavaScript, Golang, Python"))
+    profile = CVAnalyzer(settings).analyze(cv)
+    assert "Go" in profile.skills
+    doc = structure_cv(cv, profile)
+    j = job(required_skills=["Go"])
+    m = CVMatcher(settings, profile).match(j, JobAnalyzer(settings).analyze_deterministic(j), doc)
+    assert m.missing_skills == [] and m.matched_skills[0]["skill"] == "Go"

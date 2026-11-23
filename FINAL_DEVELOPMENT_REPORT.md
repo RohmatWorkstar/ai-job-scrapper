@@ -34,7 +34,7 @@ built on the existing scraper, database, AI layer and CLI.
 - **Dry run is the default.** Until you switch it off, nothing is sent: e-mails are written as `.eml`
   files to `data/outbox/`.
 
-**Test status:** 165 offline tests pass and 1 opt-in live test is skipped. Before this work there
+**Test status:** 193 offline tests pass and 1 opt-in live test is skipped. Before this work there
 were 92 tests. A post-implementation review fixed 18 issues; see §14.
 
 **Not tested against real services:** live Gmail OAuth and sending, and real Gemini responses for
@@ -353,7 +353,7 @@ through `CREATE TABLE IF NOT EXISTS`.
 
 ## 9. Testing Results
 
-Command: `python -m pytest` → **165 passed, 1 skipped** (the opt-in live network test). The new tests
+Command: `python -m pytest` → **193 passed, 1 skipped** (the opt-in live network test). The new tests
 are in `tests/unit/test_applications.py` and `tests/integration/test_application_flow.py`.
 
 ### Successful tests
@@ -570,3 +570,57 @@ by regression tests.
 | Templates: `{greeting}` | Gives "Dear Hiring Team," when the company is unknown, and no " - Candidate" in the subject when the name is unknown. Accurate "over N years". More natural Indonesian wording. A clear error for a bad template placeholder. |
 | Signature warning | Shown when the CV header has no name, phone or e-mail |
 | `--applications` | Flags locked records (unknown delivery) and shows totals per status |
+
+---
+
+## 15. Real-case end-to-end test (2026-11-23)
+
+### Setup
+
+| Item | Value |
+|---|---|
+| CV | The user's real CV (PDF, 2 pages) |
+| Job data | Real scraped jobs: 319 unique opportunities, no `SEARCH_API_KEY`, no Gemini key |
+| Sending | Real Gmail SMTP (App Password) from the user's old account |
+| Recipient | `APPLICATION_TEST_RECIPIENT` redirected every e-mail to the user's test inbox |
+| Database | Ran on a **copy** of the database, so the real history and counters stay clean |
+| Employer contact | **No employer was contacted.** Simulated employer addresses used plus-addressing on the test inbox, so even a redirect failure could not reach a company. |
+
+### Results
+
+- **Search:** 319 unique jobs and 2 reports, as before.
+- **Sending:** 10 real e-mails were sent over two runs: 6, then the 6-per-hour cap stopped the 7th; later 4 more.
+  0 failures. The minimum interval, the hourly cap, the sending window refusal at 22:00, test-redirect
+  labelling and the rehearsal-to-review status were all observed working.
+- **Tailored CV:** 2 pages from the real CV. Grouped skills, 4 positions, 4 projects with bullets,
+  website, GitHub and LinkedIn links. Reordered only; nothing invented.
+
+### Bugs found by the real-case test (all fixed and covered by regression tests)
+
+| Bug | Fix |
+|---|---|
+| **All 11 "application" e-mails in real postings were accommodation, accessibility, questions or fraud-report addresses** (for example `accommodations@coinbase.com`). They were picked because those sentences contain the word "application". | An address is kept only with an explicit "send your CV to…" instruction, or a recruiting inbox (jobs@, careers@, hr@…) in a neutral sentence. Accommodation, help, questions, fraud and support context excludes it. With this, the 319 ATS/feed jobs correctly have **0** application e-mails: these sources take applications through web forms. |
+| The real CV was mis-parsed: `▸` bullets were unknown and wrapped lines became separate "jobs" | Extended bullet set; indented or lower-case lines continue the previous bullet; in bulleted sections every non-bullet line is an entry header |
+| Skills such as "Programming Languages JavaScript" merged a category label into the first skill; items were split inside parentheses; wrapped skill lines were cut | Skill groups (`Label: items`) are parsed and rendered; splitting respects parentheses; wrapped lines are joined |
+| Projects were one item per line | Projects are entries with bullets |
+| GitHub, LinkedIn and website links were lost (they are PDF hyperlinks, not text) | PDF link annotations are read, and display URLs are cleaned |
+| Name in capitals ("ROHMAT SUPRIYADI") in the subject and signature | Shown as "Rohmat Supriyadi" |
+| "over 2 years" while the CV says "3+ years" (date ranges add up to 2.9) | The explicit CV statement is used when it is at most 2 years above the computed value; the e-mail says "3+ years" |
+| "Go" reported as missing although the CV lists "Golang" | Detector-proven skills (with aliases) count as matched |
+| The per-domain cap treated every `@gmail.com` recruiter as one company | Free-mail recipients are capped per mailbox (plus-tags ignored) |
+| Internships and onsite jobs abroad passed eligibility ("Stagiair(e)", onsite San Francisco, German "(m/w/d)" postings) | New defaults: international intern terms, German-market markers, `allow_onsite_abroad: false`, and `max_seniority_gap: 1` |
+| Post-search hint said "Next step: --apply" with 0 e-mail jobs | It now explains that these sources use web forms, and how to get e-mail postings |
+
+### Conclusion
+
+The pipeline (search → prepare → review/approve → limits → Gmail SMTP → tracking) works end to end.
+With only the free sources (no `SEARCH_API_KEY`), there are realistically **no** e-mail applications to
+send. E-mail applications come from Indonesian portals, community and social posts and HN threads,
+which need a search key.
+
+### New: test recipient
+
+Set `APPLICATION_TEST_RECIPIENT=you@example.com` in `.env` to send everything for real, but only to
+that address. Subjects are prefixed `[TEST for <employer>]`, and the employer receives nothing. The
+applications return to review afterwards, so they can still be sent for real later. Clear the variable
+for real applications.

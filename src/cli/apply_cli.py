@@ -24,6 +24,7 @@ from src.applications.email_service import (
     GmailTransport,
     MailTransport,
     SmtpTransport,
+    TestRedirectTransport,
     attachment_name,
     transport_kind,
 )
@@ -55,7 +56,26 @@ def is_dry_run(settings: Settings, force_dry_run: bool) -> bool:
     return force_dry_run or bool(settings.get("applications.sending.dry_run", True))
 
 
+def test_recipient(settings: Settings) -> str:
+    """Optional simulation address: every real e-mail is redirected there (employers receive nothing)."""
+    return (os.environ.get("APPLICATION_TEST_RECIPIENT", "").strip()
+            or str(settings.get("applications.sending.test_recipient", "") or "").strip())
+
+
 def build_transport(settings: Settings, dry_run: bool) -> tuple[MailTransport, str]:
+    transport, sender = _build_base_transport(settings, dry_run)
+    test = test_recipient(settings)
+    if test and not dry_run:
+        from src.applications.contacts import validate_address
+
+        ok, why = validate_address(test, own_email=sender)
+        if not ok:
+            raise JobIntelError(f"APPLICATION_TEST_RECIPIENT '{test}' is not usable: {why}")
+        transport = TestRedirectTransport(transport, test)
+    return transport, sender
+
+
+def _build_base_transport(settings: Settings, dry_run: bool) -> tuple[MailTransport, str]:
     if dry_run:
         outbox = settings.path("applications.sending.outbox_directory", "data/outbox")
         sender = os.environ.get("GMAIL_SENDER_ADDRESS", "").strip() or "dry-run@localhost.invalid"
@@ -115,6 +135,10 @@ def show_limits_banner(settings: Settings, dry_run: bool) -> None:
     mode = "[bold yellow]DRY RUN[/] (e-mails are written to the outbox, nothing is sent)" if dry_run else \
         "[bold red]LIVE[/] (e-mails are sent through Gmail)"
     ui.info(f"Sending: {mode}")
+    test = test_recipient(settings)
+    if test and not dry_run:
+        ui.warn(f"TEST MODE: every e-mail is redirected to {test}. Employers receive nothing, and the "
+                "applications go back to review after the test send.")
     ui.info(f"Limits: {lim.max_per_day}/day, {lim.max_per_hour}/hour, >= {lim.min_interval_seconds}s apart, "
             f"{lim.max_per_recipient_domain_per_day}/recipient domain/day ({lim.account_type} account).")
     for w in lim.warnings():
@@ -497,7 +521,8 @@ class ApplyCommands:
 
         summary = PrepareSummary()
         # Cheap pre-filter before any AI call: exclusions only, the AI match score decides relevance.
-        pre = EligibilityFilter(self.settings, {"min_relevance_score": 0, "allowed_relevance_categories": []})
+        pre = EligibilityFilter(self.settings, {"min_relevance_score": 0, "allowed_relevance_categories": []},
+                                candidate_seniority=manager.profile.seniority_estimate if manager.profile else None)
         max_jobs = limit or int(self.settings.get("applications.ai.max_jobs_per_run", 10))
         for job in jobs:
             if len(summary.prepared) >= max_jobs:
@@ -608,10 +633,14 @@ class ApplyCommands:
     @staticmethod
     def _show_queue_report(report: Any) -> None:
         real = [r for r in report.sent if r.status == S.SENT.value]
-        rehearsed = len(report.sent) - len(real)
-        ui.ok(f"Sent through Gmail: {len(real)}")
-        if rehearsed:
-            ui.info(f"Dry run: {rehearsed} e-mail(s) written to the outbox (nothing sent). They are back in review; "
+        tests = [r for r in report.sent if r.transport and "test->" in r.transport]
+        dry = len(report.sent) - len(real) - len(tests)
+        ui.ok(f"Sent to employers through Gmail: {len(real)}")
+        if tests:
+            ui.ok(f"TEST: {len(tests)} e-mail(s) sent to the test address {tests[0].transport.split('test->', 1)[1]} "
+                  "(employers received nothing; the applications are back in review).")
+        if dry:
+            ui.info(f"Dry run: {dry} e-mail(s) written to the outbox (nothing sent). They are back in review; "
                     "approve them again with dry_run off to send for real.")
         for app_id, err in report.failed:
             ui.error(f"{app_id}: {err}")

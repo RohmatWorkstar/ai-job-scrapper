@@ -62,6 +62,10 @@ class SendingScheduler:
 
     @staticmethod
     def _describe(rec: ApplicationRecord) -> str:
+        if rec.transport and "test->" in rec.transport and rec.status != ApplicationStatus.SENT.value:
+            test = rec.transport.split("test->", 1)[1]
+            return (f"TEST: e-mail sent to {test} instead of {rec.recipient_email} (the employer received nothing). "
+                    "It is back in review.")
         if rec.transport == "dry_run" and rec.status != ApplicationStatus.SENT.value:
             return (f"DRY RUN: e-mail to {rec.recipient_email} written to the outbox; nothing was sent. "
                     "It is back in review: approve it again with dry_run off to send it for real.")

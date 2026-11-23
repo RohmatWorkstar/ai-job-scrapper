@@ -279,12 +279,13 @@ class ApplicationTracker:
                                sent_at=_now(), gmail_message_id=gmail_message_id, message_id_header=message_id_header,
                                transport=transport, send_lock=None, error=None, error_kind=None)
 
-    def mark_rehearsed(self, app_id: str, *, detail: str) -> ApplicationRecord:
-        """After a dry-run send: back to PENDING_APPROVAL, lock released, approval withdrawn."""
+    def mark_rehearsed(self, app_id: str, *, detail: str, transport: str = "dry_run") -> ApplicationRecord:
+        """After a dry-run / test-recipient send: back to PENDING_APPROVAL, lock released, approval withdrawn."""
         rec = self.transition(app_id, ApplicationStatus.PENDING_APPROVAL, detail, expected=ApplicationStatus.APPROVED,
                               approval_status="none", approved_hash=None, approved_at=None, approved_by=None,
-                              send_lock=None, transport="dry_run")
-        self.add_note(app_id, f"Dry run done ({detail}). Approve again with dry_run off to send it for real.")
+                              send_lock=None, transport=transport)
+        self.add_note(app_id, f"Rehearsal done ({detail}). The employer received nothing; approve again in live "
+                              "mode to send it for real.")
         return self.get(app_id) or rec
 
     def mark_failed(self, app_id: str, *, error: str, error_kind: str, transport: str,

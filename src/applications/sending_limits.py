@@ -15,6 +15,7 @@ configured caps below are refused when they exceed half of the ceiling.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -33,6 +34,17 @@ DOCUMENTED_DAILY_CEILING = {"personal": 500, "workspace": 2000, "workspace_trial
 MAX_ALLOWED_FRACTION = 0.5
 # Above this daily volume the CLI shows a deliverability / account-risk warning.
 HIGH_VOLUME_WARNING = 50
+
+
+def recipient_key(recipient: str) -> str:
+    """Per-employer key for the per-domain cap: "@acme.co.id", or the full address for free-mail
+    domains (many unrelated recruiters use @gmail.com; they must not share one cap)."""
+    from src.applications.contacts import FREEMAIL_DOMAINS
+
+    addr = recipient.strip().lower()
+    domain = addr.rsplit("@", 1)[1]
+    plain = re.sub(r"\+[^@]*@", "@", addr)  # name+tag@gmail.com is the same mailbox as name@gmail.com
+    return plain if domain in FREEMAIL_DOMAINS else "@" + domain
 
 
 @dataclass
@@ -234,11 +246,11 @@ class SendingGuard:
                                     f"Minimum interval of {lim.min_interval_seconds} s between e-mails.",
                                     lim.min_interval_seconds - elapsed)
         if recipient and "@" in recipient:
-            domain = recipient.rsplit("@", 1)[1].lower()
+            domain = recipient_key(recipient)
             same = [a for a in day if (a.get("recipient_domain") or "") == domain and a["outcome"] == "sent"]
             if len(same) >= lim.max_per_recipient_domain_per_day:
                 return Decision(False, "domain_limit",
-                                f"Already sent {len(same)} e-mail(s) to @{domain} in 24 hours "
+                                f"Already sent {len(same)} e-mail(s) to {domain} in 24 hours "
                                 f"(max_per_recipient_domain_per_day={lim.max_per_recipient_domain_per_day}).")
         return Decision(True)
 
@@ -246,7 +258,7 @@ class SendingGuard:
     def record(self, app_id: str | None, outcome: str, recipient: str | None, *, error_kind: str | None = None,
                error: str | None = None) -> None:
         """Store an attempt and apply automatic pauses for suspicious patterns."""
-        domain = recipient.rsplit("@", 1)[1].lower() if recipient and "@" in recipient else None
+        domain = recipient_key(recipient) if recipient and "@" in recipient else None
         self.tracker.record_attempt(app_id, outcome, self.transport_name, domain, error_kind, error, iso(self._now()))
         lim = self.limits
         recent = self.tracker.last_attempts(lim.max_consecutive_failures, transport=self.transport_name)

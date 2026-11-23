@@ -53,6 +53,8 @@ class TailoredCV:
     changes: list[str] = field(default_factory=list)
     rejected_rewrites: list[dict[str, Any]] = field(default_factory=list)
     method: str = "deterministic"
+    skill_groups: list[tuple[str, list[str]]] = field(default_factory=list)
+    project_entries: list[ExperienceEntry] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -116,9 +118,26 @@ class CVGenerator:
         projects = sorted(doc.projects, key=lambda p: -_relevance(p, terms))
         if projects != doc.projects:
             changes.append("Projects reordered by relevance.")
+        matched_lower = {m.lower() for m in matched}
+
+        def item_rank(item: str) -> int:
+            low = item.lower()
+            return 0 if any(m in low or low in m for m in matched_lower) else (1 if _relevance(item, terms) else 2)
+
+        # Skill groups as written in the CV: groups with job-relevant skills first, relevant items first.
+        groups = [(label, sorted(items, key=item_rank)) for label, items in doc.skill_groups]
+        groups.sort(key=lambda g: min((item_rank(i) for i in g[1]), default=2))
+        if groups:
+            skills = [i for _, items in groups for i in items]
+        # Projects with bullets: most relevant first, bullets reordered.
+        project_entries = sorted(
+            (ExperienceEntry(p.title, p.company, p.dates, p.location, sorted(p.bullets, key=lambda b: -_relevance(b, terms)))
+             for p in doc.project_entries),
+            key=lambda p: -_relevance(" ".join([p.title, p.company, *p.bullets]), terms))
         return TailoredCV(identity=doc.identity, headline=doc.headline, summary=doc.summary, skills=skills,
                           experience=experience, projects=projects, education=list(doc.education),
-                          certifications=list(doc.certifications), languages=list(doc.languages), changes=changes)
+                          certifications=list(doc.certifications), languages=list(doc.languages), changes=changes,
+                          skill_groups=groups, project_entries=project_entries)
 
     async def tailor(self, doc: CVDocument, analysis: JobAnalysis, match: MatchReport) -> TailoredCV:
         tcv = self.tailor_deterministic(doc, analysis, match)
@@ -151,6 +170,9 @@ class CVGenerator:
         reordered = [lookup[s.lower()] for s in order if s.lower() in lookup]
         if reordered:
             tcv.skills = list(dict.fromkeys(reordered + tcv.skills))
+            rank = {s.lower(): i for i, s in enumerate(reordered)}
+            tcv.skill_groups = [(label, sorted(items, key=lambda x: rank.get(x.lower(), len(rank))))
+                                for label, items in tcv.skill_groups]
         # bullets
         sources: dict[str, tuple[int, str]] = {}
         for i, e in enumerate(doc.experience):
@@ -196,7 +218,14 @@ class CVGenerator:
             parts.append(f'<p class="contact">{e(contact)}</p>')
         if t.summary:
             parts.append(f"<h2>Summary</h2><p>{e(t.summary)}</p>")
-        if t.skills:
+        if t.skill_groups:
+            parts.append("<h2>Skills</h2>")
+            for label, items in t.skill_groups:
+                if not label and not self.detector.detect_names(", ".join(items)):
+                    label = "Soft Skills"
+                prefix = f"<b>{e(label)}:</b> " if label else ""
+                parts.append(f"<p>{prefix}{e(', '.join(items))}</p>")
+        elif t.skills:
             parts.append(f"<h2>Skills</h2><p>{e(', '.join(t.skills))}</p>")
         if t.experience:
             parts.append("<h2>Experience</h2>")
@@ -208,7 +237,14 @@ class CVGenerator:
                     parts.append(f'<p class="dates">{e(x.dates)}</p>')
                 if x.bullets:
                     parts.append("<ul>" + "".join(f"<li>{e(b)}</li>" for b in x.bullets) + "</ul>")
-        for title, items in (("Projects", t.projects), ("Education", t.education),
+        if t.project_entries:
+            parts.append("<h2>Projects</h2>")
+            for x in t.project_entries:
+                name = " - ".join(v for v in (x.title, x.company) if v)
+                parts.append(f'<p class="role">{e(name)}</p>')
+                if x.bullets:
+                    parts.append("<ul>" + "".join(f"<li>{e(b)}</li>" for b in x.bullets) + "</ul>")
+        for title, items in ((("Projects", t.projects),) if not t.project_entries else ()) + (("Education", t.education),
                              ("Certifications", t.certifications), ("Languages", t.languages)):
             if items:
                 parts.append(f"<h2>{title}</h2><ul>" + "".join(f"<li>{e(i)}</li>" for i in items) + "</ul>")

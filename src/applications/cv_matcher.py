@@ -68,8 +68,9 @@ class CVMatcher:
             if base.lower() in have:
                 for imp in implied:
                     have.setdefault(imp.lower(), f"implied by {base}")
+        proven = {s.lower() for s in self.profile.skills}  # found by the skill detector (aliases: Golang -> Go)
         for s in list(have):
-            if not _has(text_lower, s) and not have[s].startswith("implied"):
+            if s not in proven and not _has(text_lower, s) and not have[s].startswith("implied"):
                 have.pop(s)  # never claim a skill the CV text does not contain
         return have
 

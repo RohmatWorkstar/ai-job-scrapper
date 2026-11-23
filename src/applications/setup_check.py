@@ -47,6 +47,7 @@ def validate_applications_settings(settings: Settings) -> None:
     el = app.get("eligibility") or {}
     _num(errors, el, "min_relevance_score", "applications.eligibility", 0, 100)
     _num(errors, el, "max_posting_age_days", "applications.eligibility", 1, 3650)
+    _num(errors, el, "max_seniority_gap", "applications.eligibility", 0, 5)
     bad = [c for c in _list(errors, el, "allowed_relevance_categories", "applications.eligibility")
            if str(c).upper() not in VALID_CATEGORIES]
     if bad:
@@ -126,6 +127,13 @@ def setup_checklist(settings: Settings, jobs_with_email: int | None = None) -> l
     sender = os.environ.get("GMAIL_SENDER_ADDRESS", "").strip()
     items.append(CheckItem("GMAIL_SENDER_ADDRESS in .env", bool(sender) and validate_address(sender)[0],
                            sender or "not set", "Add GMAIL_SENDER_ADDRESS=you@gmail.com to .env", "live"))
+    test = (os.environ.get("APPLICATION_TEST_RECIPIENT", "").strip()
+            or str(settings.get("applications.sending.test_recipient", "") or "").strip())
+    if test:
+        items.append(CheckItem("TEST MODE (recipient redirect)", validate_address(test, own_email=sender)[0],
+                               f"all e-mails go to {test}; employers receive nothing",
+                               "Use an address you own that differs from GMAIL_SENDER_ADDRESS; clear it for real "
+                               "applications", "live"))
     kind = transport_kind(settings)
     items.append(CheckItem("Gmail transport", True, "SMTP with App Password" if kind == "smtp" else
                            "Gmail API with OAuth (gmail.send)", "applications.sending.transport in settings.yaml",

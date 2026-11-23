@@ -243,8 +243,13 @@ class Application:
         if result.data is not None:
             ui.show_completion(result.data, result.report_files, result.status)
             with_email = sum(1 for j in result.data.jobs if j.application_emails)
-            ui.info(f"{with_email} opportunity(ies) list an application e-mail. Next step: "
-                    "python main.py --apply basic   (or --apply ai for a tailored CV per job)")
+            if with_email:
+                ui.info(f"{with_email} opportunity(ies) accept applications by e-mail. Next step: "
+                        "python main.py --apply basic   (or --apply ai for a tailored CV per job)")
+            else:
+                ui.info("None of these postings accepts applications by e-mail (ATS boards and job feeds use "
+                        "web forms): apply through the links in the report. A SEARCH_API_KEY adds job portals, "
+                        "community and social posts, where e-mail applications are common.")
         for e in result.errors:
             ui.warn(e)
         return 0 if result.report_files else 1

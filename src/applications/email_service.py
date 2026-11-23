@@ -152,6 +152,34 @@ class SmtpTransport:
         return TransportResult(message_id=str(msg["Message-ID"]), transport="gmail_smtp")
 
 
+class TestRedirectTransport:
+    """Sends for real, but ONLY to a test address you own (end-to-end simulation).
+
+    The employer never receives anything: the To header is replaced, the subject is prefixed with
+    "[TEST for <original>]" and X-Original-To keeps the intended address. Like a dry run, it is a
+    rehearsal: the application returns to review instead of becoming SENT, so it can still be
+    sent to the employer later. It uses the real Gmail counters (it is real Gmail sending).
+    """
+
+    rehearsal = True
+
+    def __init__(self, inner: MailTransport, test_recipient: str) -> None:
+        self.inner = inner
+        self.name = inner.name
+        self.test_recipient = test_recipient
+
+    async def send(self, msg: EmailMessage) -> TransportResult:
+        original = str(msg["To"])
+        del msg["To"]
+        msg["To"] = self.test_recipient
+        subject = str(msg["Subject"])
+        del msg["Subject"]
+        msg["Subject"] = f"[TEST for {original}] {subject}"
+        msg["X-Original-To"] = original
+        res = await self.inner.send(msg)
+        return TransportResult(message_id=res.message_id, transport=f"{res.transport}:test->{self.test_recipient}")
+
+
 class GmailTransport:
     name = "gmail"
 
@@ -254,8 +282,13 @@ class EmailService:
         self.guard.record(rec.id, "sent", rec.recipient_email)
         log_event(log, 20, "application.sent", id=rec.id, transport=result.transport)
         if getattr(self.transport, "rehearsal", False):
-            # A dry run is a rehearsal: the record must stay sendable for real, and a live send needs
-            # a fresh approval (made while dry_run is off), so it goes back to PENDING_APPROVAL.
-            return self.tracker.mark_rehearsed(rec.id, detail=f"dry run: written to {result.message_id}")
+            # Dry run / test recipient are rehearsals: the record must stay sendable for real, and a
+            # real send needs a fresh approval, so it goes back to PENDING_APPROVAL.
+            if isinstance(self.transport, TestRedirectTransport):
+                detail = (f"test send: delivered to {self.transport.test_recipient} instead of "
+                          f"{rec.recipient_email} (Message-ID {message_id})")
+            else:
+                detail = f"dry run: written to {result.message_id}"
+            return self.tracker.mark_rehearsed(rec.id, detail=detail, transport=result.transport)
         return self.tracker.mark_sent(rec.id, gmail_message_id=result.message_id, message_id_header=message_id,
                                       transport=result.transport)

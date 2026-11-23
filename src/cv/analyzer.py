@@ -238,6 +238,11 @@ class CVAnalyzer:
         if years is None and explicit:
             years = max(explicit)
             notes.append("Experience years taken from an explicit statement in the CV.")
+        elif years is not None and explicit and max(explicit) > years and max(explicit) - years <= 2:
+            # The CV states it explicitly ("3+ years"); date ranges often miss freelance/part-time work.
+            notes.append(f"Experience years taken from the CV statement ({max(explicit):g}+ years); "
+                         f"listed date ranges add up to {years:g}.")
+            years = max(explicit)
         elif years is not None:
             notes.append("Experience years computed from employment date ranges in the CV (overlaps merged).")
         else:

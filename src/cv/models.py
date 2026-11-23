@@ -14,6 +14,8 @@ class ParsedCV:
     pages: int
     sha256: str
     warnings: list[str] = field(default_factory=list)
+    # Hyperlink targets embedded in the file (PDF "Website | GitHub | LinkedIn" labels carry the URL here).
+    links: list[str] = field(default_factory=list)
 
     @property
     def char_count(self) -> int:

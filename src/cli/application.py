@@ -26,7 +26,8 @@ from src.utils.logger import setup_logging
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    p = argparse.ArgumentParser(prog="python main.py", description="AI Job Intelligence & Discovery System")
+    p = argparse.ArgumentParser(prog="python main.py", description="AI Job Intelligence & Discovery System",
+                                formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--cv", help="CV file name inside the cv/ folder (skips the CV selection prompt)")
     p.add_argument("--defaults", action="store_true",
                    help="Non-interactive: use saved preferences/defaults for every question and start immediately")
@@ -35,6 +36,26 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--check", action="store_true", help="Check configuration and source availability, then exit")
     p.add_argument("--history", action="store_true", help="List previous search sessions, then exit")
     p.add_argument("--report", metavar="SESSION_ID", help="Regenerate DOCX/XLSX reports for a stored session")
+    g = p.add_argument_group("application automation (e-mail applications)")
+    g.add_argument("--apply", choices=["basic", "ai"],
+                   help="Prepare applications from scraped jobs: 'basic' = original CV PDF, 'ai' = tailored CV per job")
+    g.add_argument("--session", metavar="SESSION_ID", help="Use jobs from this search session (default: latest)")
+    g.add_argument("--limit", type=int, help="Maximum applications to prepare (or e-mails to send with --send-queue)")
+    g.add_argument("--review", action="store_true", help="Review applications waiting for approval")
+    g.add_argument("--send-queue", action="store_true", help="Send approved applications within the sending limits")
+    g.add_argument("--dry-run", action="store_true", help="Never contact Gmail; write .eml files to the outbox")
+    g.add_argument("--auto", action="store_true",
+                   help="Automatic approval+sending (also requires mode: automatic and automatic_enabled: true)")
+    g.add_argument("--allow-duplicate", action="store_true",
+                   help="Allow re-applying to a company+position already applied to (asks for confirmation)")
+    g.add_argument("--setup-check", action="store_true",
+                   help="Show what is set up for applications and what you still need to do manually")
+    g.add_argument("--gmail-auth", action="store_true", help="Authorise Gmail sending (OAuth 2.0, gmail.send scope)")
+    g.add_argument("--applications", action="store_true", help="List the application history")
+    g.add_argument("--sending-status", action="store_true", help="Show sending counters, limits, pause/stop state")
+    g.add_argument("--emergency-stop", action="store_true", help="Block all sending immediately")
+    g.add_argument("--resume-sending", action="store_true", help="Clear the emergency stop and automatic pauses")
+    g.add_argument("--requeue", metavar="APPLICATION_ID", help="Move a FAILED application back to review")
     return p.parse_args(argv)
 
 
@@ -101,7 +122,7 @@ class Application:
         assert self.settings is not None
         files = list_cv_files(self.settings.cv_directory)
         if not files:
-            ui.error(f"No CV found. Put a PDF, DOCX or TXT CV into: {self.settings.cv_directory}")
+            ui.error(f"No CV found. Put a PDF, DOCX, DOC or TXT CV into: {self.settings.cv_directory}")
             return None
         print()
         ui.console.print("[bold]Available CV files:[/]")
@@ -216,6 +237,9 @@ class Application:
             orch.close()
         if result.data is not None:
             ui.show_completion(result.data, result.report_files, result.status)
+            with_email = sum(1 for j in result.data.jobs if j.application_emails)
+            ui.info(f"{with_email} opportunity(ies) list an application e-mail. Next step: "
+                    "python main.py --apply basic   (or --apply ai for a tailored CV per job)")
         for e in result.errors:
             ui.warn(e)
         return 0 if result.report_files else 1
@@ -224,10 +248,12 @@ class Application:
         assert self.settings is not None
         if not self.interactive:
             ui.info("Non-interactive mode: saved preferences / defaults are used for every question.")
-        cv = self.choose_cv()
+        # Questionary's .ask() starts its own event loop, so the synchronous prompt steps run in a
+        # worker thread (contextvars are copied) instead of inside this coroutine's running loop.
+        cv = await asyncio.to_thread(self.choose_cv)
         if cv is None:
             return 1
-        use_ai = self.ai_consent()
+        use_ai = await asyncio.to_thread(self.ai_consent)
         ui.info("Analyzing candidate profile" + (" (deterministic + Gemini)..." if use_ai else " (deterministic)..."))
         profile = await self.build_profile(cv, use_ai)
         orch = Orchestrator(self.settings)
@@ -237,7 +263,7 @@ class Application:
             orch.close()
         ui.show_profile(profile)
         ui.ok("Candidate profile generated.")
-        config = self.questionnaire(profile)
+        config = await asyncio.to_thread(self.questionnaire, profile)
         return await self.run_pipeline(profile, config, profile_id)
 
     # ---------------------------------------------------------- utilities
@@ -339,6 +365,11 @@ def run(argv: list[str] | None = None) -> int:
             return app.regenerate(args.report)
         if args.check:
             return asyncio.run(app.check_sources())
+        from src.cli.apply_cli import run_apply_command
+
+        handled = run_apply_command(app)
+        if handled is not None:
+            return handled
         return asyncio.run(app.main_flow())
     except Cancelled:
         ui.warn("Cancelled by user. No search was started.")

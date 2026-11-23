@@ -136,6 +136,10 @@ class Repository:
         self._many("INSERT INTO verification_history(job_key, session_id, status, reason, checked_at) VALUES (?,?,?,?,?)",
                    ver_rows)
 
+    def get_opportunity(self, job_key: str) -> JobOpportunity | None:
+        row = self.conn.execute("SELECT data_json FROM opportunities WHERE job_key=?", (job_key,)).fetchone()
+        return JobOpportunity.from_dict(json.loads(row["data_json"])) if row else None
+
     def session_opportunities(self, session_id: str) -> list[JobOpportunity]:
         rows = self.conn.execute("SELECT data_json FROM session_opportunities WHERE session_id=?", (session_id,)).fetchall()
         return [JobOpportunity.from_dict(json.loads(r["data_json"])) for r in rows]

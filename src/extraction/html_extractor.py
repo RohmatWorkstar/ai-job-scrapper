@@ -162,6 +162,7 @@ class PageExtraction:
     lang: str | None = None
     job_postings: list[JobPostingLD] = field(default_factory=list)
     apply_links: list[str] = field(default_factory=list)
+    mailto_links: list[str] = field(default_factory=list)
     published_hint: datetime | None = None
     published_evidence: str = ""
     closed_markers: list[str] = field(default_factory=list)
@@ -239,8 +240,8 @@ def extract_from_html(html: str, url: str, closed_indicators: list[str] | None =
     for a in soup.find_all("a", href=True):
         href = str(a["href"]).strip()
         label = a.get_text(" ", strip=True)
-        if href.startswith(("mailto:", "javascript:", "#", "tel:")):
-            continue
+        if href.startswith(("mailto:", "MAILTO:", "javascript:", "#", "tel:")):
+            continue  # mailto links are collected below, from the main content only
         if _APPLY_RE.search(label) or re.search(r"(?i)/apply|/application|applyurl", href):
             absolute = urljoin(url, href)
             if absolute.startswith("http") and absolute not in page.apply_links:
@@ -250,6 +251,12 @@ def extract_from_html(html: str, url: str, closed_indicators: list[str] | None =
     # Visible text
     for tag in soup(["script", "style", "noscript", "svg", "nav", "footer", "header", "form", "iframe"]):
         tag.decompose()
+    # Application e-mails: only mailto links left in the main content (site-wide footer/header
+    # contacts such as a portal's info@ address were removed above).
+    for a in soup.find_all("a", href=True):
+        href = str(a["href"]).strip()
+        if href.lower().startswith("mailto:") and href not in page.mailto_links and len(page.mailto_links) < 10:
+            page.mailto_links.append(href)
     page.text = clean_text(soup.get_text("\n"), 12000)
     if not page.published_hint:
         t = soup.find("time", attrs={"datetime": True})

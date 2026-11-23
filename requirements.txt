@@ -10,6 +10,8 @@ PyYAML>=6.0
 python-dotenv>=1.0
 python-dateutil>=2.9
 tzdata>=2024.1            # IANA timezone data (Asia/Jakarta) - required on Windows
+google-auth>=2.29         # Gmail OAuth token handling (application e-mails); imported only when Gmail is used
+google-auth-oauthlib>=1.2 # Gmail OAuth installed-app consent flow
 
 # Optional: headless-browser rendering for JavaScript-heavy career pages.
 #   pip install playwright && python -m playwright install chromium

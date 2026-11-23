@@ -180,6 +180,8 @@ class JobOpportunity:
     source_name: str = ""
     source_url: str = ""
     application_url: str | None = None
+    # Application e-mail addresses found in the posting (ranked, best first). Used by src/applications.
+    application_emails: list[str] = field(default_factory=list)
     verification_status: str = VerificationStatus.UNVERIFIED.value
     verification_reason: str = ""
     relevance_score: float | None = None

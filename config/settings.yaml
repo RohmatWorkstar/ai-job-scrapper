@@ -189,6 +189,66 @@ performance:
     himalayas.app: 2
     default: 0.5
 
+applications:
+  # E-mail application automation (python main.py --apply basic|ai). See FINAL_DEVELOPMENT_REPORT.md.
+  generated_cv_directory: data/generated_cvs     # tailored CV PDFs (git-ignored); originals in cv/ are never modified
+  email_templates_file: config/email_templates.yaml
+  email_language: auto                            # auto (from the posting) | en | id
+  basic_cv_file: ""                               # PDF in cv/ attached in Basic mode; empty = ask / the only PDF
+  max_jobs_per_run: 30                            # applications prepared per run
+  allow_freemail_recipients: true                 # gmail.com/yahoo.com recruiter addresses (flagged in review)
+
+  eligibility:                                    # Basic-mode filters (AI mode uses ai.min_match_score)
+    min_relevance_score: 58
+    allowed_relevance_categories: [HIGHLY RELEVANT, RELEVANT]
+    excluded_verification_statuses: [CLOSED, POSSIBLE_SCAM, INACCESSIBLE]
+    title_include_keywords: []                    # e.g. [developer, engineer]; empty = any title
+    title_exclude_keywords: [intern, internship, magang, sales, director, head of]
+    exclude_companies: []
+    allowed_employment_types: []                  # e.g. [full_time, contract]; empty = any
+    max_posting_age_days: 45
+    require_email: true
+
+  ai:
+    min_match_score: 55                           # AI-mode jobs below this are REJECTED (no CV generated)
+    rewrite_with_ai: true                         # false = reorder only, no AI rephrasing
+    max_calls_per_run: 60                         # AI budget for one --apply ai run
+    max_jobs_per_run: 10
+    max_cv_pages: 3
+    match_weights: {skills: 40, title: 25, experience: 20, keywords: 15}
+
+  gmail:
+    client_secret_file: data/secrets/gmail_client_secret.json   # or GMAIL_CLIENT_SECRET_FILE in .env
+    token_file: data/secrets/gmail_token.json                   # or GMAIL_TOKEN_FILE in .env
+
+  sending:
+    # dry_run: true writes .eml files to outbox_directory and never contacts Gmail.
+    # Set it to false only after checking the outbox and authorising Gmail (--gmail-auth).
+    dry_run: true
+    outbox_directory: data/outbox
+    mode: manual                     # manual (default) | scheduled | automatic
+    automatic_enabled: false         # automatic mode also needs mode: automatic AND the --auto flag
+    automatic_min_match_score: 75
+    account_type: personal           # personal | workspace | workspace_trial (sets the documented ceiling)
+    # Conservative defaults. Google's documented limits (personal ~500/day, Workspace 2,000/day) are
+    # the points where Gmail BLOCKS sending, not safe targets. Values above half of them are refused.
+    max_per_day: 20
+    max_per_hour: 6
+    min_interval_seconds: 180
+    max_per_recipient_domain_per_day: 2
+    max_consecutive_failures: 3      # automatic pause after this many failures in a row
+    max_invalid_recipients_per_day: 3
+    quota_pause_hours: 24            # pause after a Gmail sending-limit/quota error
+    max_send_attempts: 3             # transient-error retries for one e-mail (exponential backoff)
+    backoff_base_seconds: 2
+    max_wait_seconds: 900            # longest wait inside one --send-queue run before stopping
+    max_attachment_mb: 10
+    emergency_stop_file: data/STOP_SENDING   # create this file to stop all sending immediately
+    sending_window:                  # local time (application.timezone)
+      start_hour: 8
+      end_hour: 18
+      weekdays: [0, 1, 2, 3, 4]      # Monday=0
+
 reporting:
   output_directory: reports
   docx_enabled: true

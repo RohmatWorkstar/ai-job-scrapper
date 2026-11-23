@@ -3,6 +3,11 @@
 .env.*
 !.env.example
 
+# OAuth client files and tokens (also kept under data/secrets/, which is ignored below)
+client_secret*.json
+*gmail_token*.json
+*.eml
+
 # Personal data: CVs, results, history
 cv/*
 !cv/README.md

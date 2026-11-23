@@ -7,7 +7,81 @@ from pathlib import Path
 
 from src.core.exceptions import StorageError
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
+
+# Version 2 (application automation) adds new tables only; version-1 tables are untouched,
+# so existing databases upgrade in place through CREATE TABLE IF NOT EXISTS.
+APPLICATION_SCHEMA = """
+CREATE TABLE IF NOT EXISTS applications (
+    id TEXT PRIMARY KEY,
+    job_key TEXT,
+    session_id TEXT,
+    company_name TEXT,
+    job_title TEXT,
+    job_url TEXT,
+    recipient_email TEXT,
+    mode TEXT NOT NULL,
+    match_score REAL,
+    match_json TEXT,
+    original_cv_path TEXT,
+    original_cv_sha256 TEXT,
+    generated_cv_path TEXT,
+    attachment_path TEXT,
+    attachment_sha256 TEXT,
+    email_subject TEXT,
+    email_body TEXT,
+    status TEXT NOT NULL,
+    approval_status TEXT NOT NULL DEFAULT 'none',
+    approved_at TEXT,
+    approved_by TEXT,
+    approved_hash TEXT,
+    dedupe_key TEXT NOT NULL,
+    allow_duplicate INTEGER NOT NULL DEFAULT 0,
+    duplicate_authorization TEXT,
+    send_lock TEXT,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    error TEXT,
+    error_kind TEXT,
+    gmail_message_id TEXT,
+    message_id_header TEXT,
+    transport TEXT,
+    notes_json TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    sent_at TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_app_dedupe ON applications(dedupe_key);
+CREATE INDEX IF NOT EXISTS ix_app_status ON applications(status);
+CREATE INDEX IF NOT EXISTS ix_app_job ON applications(job_key);
+
+CREATE TABLE IF NOT EXISTS application_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    application_id TEXT NOT NULL,
+    from_status TEXT,
+    to_status TEXT NOT NULL,
+    detail TEXT,
+    occurred_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_app_events ON application_events(application_id);
+
+CREATE TABLE IF NOT EXISTS send_attempts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    application_id TEXT,
+    attempted_at TEXT NOT NULL,
+    outcome TEXT NOT NULL,
+    transport TEXT NOT NULL,
+    recipient_domain TEXT,
+    error_kind TEXT,
+    error TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_send_attempts_time ON send_attempts(attempted_at);
+
+CREATE TABLE IF NOT EXISTS sending_control (
+    key TEXT PRIMARY KEY,
+    value TEXT,
+    updated_at TEXT NOT NULL
+);
+"""
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
@@ -145,6 +219,7 @@ class Database:
     def migrate(self) -> None:
         with self.conn:
             self.conn.executescript(SCHEMA)
+            self.conn.executescript(APPLICATION_SCHEMA)
             self.conn.execute("INSERT OR REPLACE INTO meta(key, value) VALUES ('schema_version', ?)", (str(SCHEMA_VERSION),))
 
     def close(self) -> None:

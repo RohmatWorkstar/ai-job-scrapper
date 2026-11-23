@@ -138,6 +138,7 @@ def merge_group(jobs: list[JobOpportunity]) -> JobOpportunity:
             primary.published_at = other.published_at
         if len(other.job_description) > len(primary.job_description) * 1.5:
             primary.job_description = other.job_description
+        primary.application_emails = list(dict.fromkeys(primary.application_emails + other.application_emails))[:10]
         primary.required_skills = list(dict.fromkeys(primary.required_skills + other.required_skills))
         primary.preferred_skills = [s for s in dict.fromkeys(primary.preferred_skills + other.preferred_skills)
                                     if s not in primary.required_skills]

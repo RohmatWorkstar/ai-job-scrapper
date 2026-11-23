@@ -252,7 +252,7 @@ discoveries, opportunities, source references, verification history, errors and 
 
 ```powershell
 pip install -r requirements-dev.txt
-python -m pytest                      # offline suite: 92 tests (1 live test skipped)
+python -m pytest                      # offline suite: 165 tests (1 live test skipped)
 $env:RUN_LIVE_TESTS="1"; python -m pytest tests/integration/test_live_optin.py   # opt-in network test
 ```
 
@@ -303,6 +303,32 @@ register it in `PROVIDERS`.
 
 ---
 
+## 11. Application automation (e-mail applications)
+
+Applies by e-mail to scraped jobs whose posting contains an application address. Every e-mail
+needs your approval, and sending goes through conservative Gmail safety limits. Full details,
+the Gmail limit research and the setup guide are in
+[FINAL_DEVELOPMENT_REPORT.md](FINAL_DEVELOPMENT_REPORT.md).
+
+```powershell
+python main.py                                 # 1. search jobs (unchanged)
+python main.py --setup-check                   # what is set up / what you still have to do manually
+python main.py --apply basic                   # 2a. original CV PDF + template e-mail, review each one
+python main.py --apply ai                      # 2b. AI job analysis, match score, tailored CV PDF + e-mail
+python main.py --review                        # review applications still waiting for approval
+python main.py --send-queue                    # send approved applications within the limits
+python main.py --applications                  # application history
+python main.py --sending-status                # counters, limits, pause / emergency-stop state
+python main.py --emergency-stop                # block all sending immediately (--resume-sending to clear)
+python main.py --gmail-auth                    # one-time Gmail OAuth consent (gmail.send scope only)
+```
+
+**Dry run is the default.** `applications.sending.dry_run: true` writes `.eml` files to
+`data/outbox/` and never contacts Gmail. A dry-run "send" is a rehearsal: the application goes back
+to review, and you approve it again (with dry run off) to send it for real.
+
+---
+
 ## Project layout
 
 ```text
@@ -319,6 +345,7 @@ src/intelligence/          relevance prefilter, verification, evidence, deduplic
 src/ai/                    provider interface, Gemini REST provider, prompts, manager (budget + cache)
 src/storage/               SQLite schema, repository, history & preferences
 src/reporting/             report model, DOCX and XLSX generators
+src/applications/          e-mail application automation (Basic/AI modes, Gmail, sending limits, tracker)
 src/utils/                 safe HTTP client, validators, dates, logging, retry
 tests/                     unit/, integration/, fixtures/, test_pipeline.py
 data/                      database, cache, logs (created at runtime, git-ignored)

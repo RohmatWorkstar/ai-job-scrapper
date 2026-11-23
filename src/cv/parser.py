@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import hashlib
 import re
+import shutil
+import subprocess
+import tempfile
 from pathlib import Path
 
 from src.core.exceptions import CVError, ScannedPDFError
 from src.cv.models import ParsedCV
 
-SUPPORTED_EXTENSIONS = {".pdf", ".docx", ".txt"}
+SUPPORTED_EXTENSIONS = {".pdf", ".docx", ".doc", ".txt"}
 MAX_CV_BYTES = 15 * 1024 * 1024
 MIN_TEXT_CHARS = 80
 
@@ -103,6 +106,46 @@ def _parse_docx(path: Path) -> tuple[str, int, list[str]]:
     return text, 1, []
 
 
+def _doc_converters() -> list[list[str]]:
+    """Commands able to turn a legacy Word .doc into text, if installed on this machine."""
+    out: list[list[str]] = []
+    if shutil.which("antiword"):
+        out.append(["antiword", "-w", "0"])
+    for name in ("soffice", "libreoffice"):
+        exe = shutil.which(name)
+        if exe:
+            out.append([exe])
+            break
+    return out
+
+
+def _parse_doc(path: Path) -> tuple[str, int, list[str]]:
+    """Legacy .doc (OLE2) via antiword or LibreOffice. Neither is a Python dependency."""
+    converters = _doc_converters()
+    if not converters:
+        raise CVError(f"'{path.name}' is a legacy .doc file. Install antiword or LibreOffice, or save the CV as "
+                      "PDF/DOCX, to use it.")
+    errors: list[str] = []
+    for cmd in converters:
+        try:
+            if cmd[0] == "antiword":
+                proc = subprocess.run([*cmd, str(path)], capture_output=True, timeout=60, check=False)
+                text = proc.stdout.decode("utf-8", errors="replace")
+            else:
+                with tempfile.TemporaryDirectory() as tmp:
+                    subprocess.run([cmd[0], "--headless", "--convert-to", "txt:Text", "--outdir", tmp, str(path)],
+                                   capture_output=True, timeout=120, check=False)
+                    out = Path(tmp) / (path.stem + ".txt")
+                    text = out.read_text(encoding="utf-8", errors="replace") if out.exists() else ""
+        except (OSError, subprocess.SubprocessError) as exc:
+            errors.append(f"{Path(cmd[0]).name}: {exc}")
+            continue
+        if len(text.strip()) >= MIN_TEXT_CHARS:
+            return text, 1, [f"Converted from .doc with {Path(cmd[0]).name}."]
+        errors.append(f"{Path(cmd[0]).name}: no text produced")
+    raise CVError(f"Cannot read '{path.name}': " + "; ".join(errors))
+
+
 def _parse_txt(path: Path) -> tuple[str, int, list[str]]:
     raw = path.read_bytes()
     for enc in ("utf-8-sig", "utf-16", "cp1252", "latin-1"):
@@ -125,7 +168,7 @@ def parse_cv(path: Path) -> ParsedCV:
         raise CVError(f"CV file not found: {path}")
     suffix = path.suffix.lower()
     if suffix not in SUPPORTED_EXTENSIONS:
-        raise CVError(f"Unsupported CV format '{suffix}'. Supported: PDF, DOCX, TXT.")
+        raise CVError(f"Unsupported CV format '{suffix}'. Supported: PDF, DOCX, DOC, TXT.")
     size = path.stat().st_size
     if size == 0:
         raise CVError(f"'{path.name}' is empty.")
@@ -141,6 +184,10 @@ def parse_cv(path: Path) -> ParsedCV:
         if not data.startswith(b"PK"):
             raise CVError(f"'{path.name}' is not a valid DOCX file.")
         text, pages, warnings = _parse_docx(path)
+    elif suffix == ".doc":
+        if not data.startswith(b"\xd0\xcf\x11\xe0"):
+            raise CVError(f"'{path.name}' is not a valid Word .doc file.")
+        text, pages, warnings = _parse_doc(path)
     else:
         text, pages, warnings = _parse_txt(path)
     return ParsedCV(filename=path.name, file_format=suffix[1:], text=_normalise(text), pages=pages, sha256=sha,

@@ -1,0 +1,39 @@
+# Application e-mail templates (Basic mode, and AI-mode fallback).
+# Placeholders: {greeting} {job_title} {company} {name} {current_title} {years_phrase} {skills_phrase}
+#               {experience_phrase} {signature}
+# Every phrase is built only from facts in your CV; empty phrases disappear cleanly.
+# {greeting} is "Dear Hiring Team at <Company>," (or "Dear Hiring Team," when the company is unknown).
+# The language is chosen from the job posting (Indonesian postings get the "id" template), or fixed
+# with applications.email_language in settings.yaml.
+
+en:
+  subject: "Application for {job_title} - {name}"
+  body: |
+    {greeting}
+
+    I am writing to apply for the {job_title} position. I am a {current_title}{years_phrase}{skills_phrase}.
+
+    {experience_phrase}
+
+    Please find my CV attached. I would welcome the opportunity to discuss how I can contribute to {company}.
+
+    Thank you for your time and consideration.
+
+    Kind regards,
+    {signature}
+
+id:
+  subject: "Lamaran Posisi {job_title} - {name}"
+  body: |
+    {greeting}
+
+    Dengan hormat, saya bermaksud melamar posisi {job_title}. Saya seorang {current_title}{years_phrase}{skills_phrase}.
+
+    {experience_phrase}
+
+    Bersama e-mail ini saya lampirkan CV saya. Saya berharap dapat berdiskusi lebih lanjut mengenai kontribusi yang dapat saya berikan untuk {company}.
+
+    Atas perhatian Bapak/Ibu, saya ucapkan terima kasih.
+
+    Hormat saya,
+    {signature}

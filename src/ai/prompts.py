@@ -91,6 +91,72 @@ def job_extraction_prompt(items: list[dict[str, Any]]) -> str:
     )
 
 
+# ------------------------------------------------------------ application automation
+
+NO_FABRICATION = (
+    "Never add experience, employers, job titles, dates, skills, tools, certifications, education, numbers or "
+    "achievements that are not present in the candidate data. You may only reorder, shorten, or rephrase what is there."
+)
+
+
+def cv_structure_prompt(cv_text: str) -> str:
+    schema = {
+        "experience": [{"title": "job title exactly as written", "company": "employer exactly as written",
+                        "dates": "date range exactly as written or null",
+                        "bullets": ["each responsibility/achievement line copied VERBATIM"]}],
+    }
+    return (
+        "Segment the work-experience section of this CV. Copy every text value verbatim from the CV; do not "
+        "summarise, merge or rephrase. Return JSON:\n" + json.dumps(schema, indent=1) + "\n\n" + fence(cv_text)
+    )
+
+
+def job_analysis_prompt(title: str, company: str, description: str) -> str:
+    schema = {
+        "required_skills": ["technologies/skills explicitly required"],
+        "preferred_skills": ["technologies/skills marked as nice-to-have or preferred"],
+        "responsibilities": ["short verbatim or near-verbatim responsibility lines"],
+        "requirements": ["short verbatim requirement/qualification lines"],
+        "experience_years_required": "number or null - only if stated",
+        "education_requirement": "string or null - only if stated",
+        "keywords": ["important domain or technical keywords that appear in the text"],
+    }
+    return (
+        f"Analyse this job posting (title: {title!r}, company: {company!r}). Every item must be supported by the "
+        "posting text. Return JSON:\n" + json.dumps(schema, indent=1) + "\n\n" + fence(description[:12000])
+    )
+
+
+def cv_tailor_prompt(job: dict[str, Any], cv: dict[str, Any]) -> str:
+    schema = {
+        "summary": "2-3 sentence professional summary for THIS job, using only facts from the candidate data",
+        "skills_order": ["candidate skills, most relevant to the job first (only skills from the candidate data)"],
+        "bullets": [{"id": "bullet id from the input", "text": "rephrased bullet emphasising job-relevant aspects"}],
+    }
+    return (
+        "Tailor the candidate's CV to the job. " + NO_FABRICATION + " Keep each rephrased bullet about the same "
+        "length as the original, keep every number exactly as written, and do not claim leadership, ownership or "
+        "scope that the original bullet does not state. Only include bullets you actually changed. Return JSON:\n"
+        + json.dumps(schema, indent=1)
+        + "\n\nJob analysis:\n" + fence(json.dumps(job, ensure_ascii=False))
+        + "\n\nCandidate data (from the CV):\n" + fence(json.dumps(cv, ensure_ascii=False))
+    )
+
+
+def application_email_prompt(job: dict[str, Any], candidate: dict[str, Any], language: str = "en") -> str:
+    schema = {"subject": "short e-mail subject naming the position", "body": "e-mail body WITHOUT greeting signature block"}
+    lang = "Indonesian (Bahasa Indonesia, formal)" if language == "id" else "English"
+    return (
+        f"Write a concise, professional job application e-mail in {lang} (120-220 words). Mention the exact job title "
+        "and company name, briefly introduce the candidate, highlight 2-3 relevant experiences or skills, and say that "
+        "the CV is attached. " + NO_FABRICATION + " Do not include contact details, links, placeholders like [Name], "
+        "or a signature: those are added separately. Start the body with a salutation such as 'Dear Hiring Team,'. "
+        "Return JSON:\n" + json.dumps(schema, indent=1)
+        + "\n\nJob:\n" + fence(json.dumps(job, ensure_ascii=False))
+        + "\n\nCandidate (from the CV):\n" + fence(json.dumps(candidate, ensure_ascii=False))
+    )
+
+
 def matching_prompt(candidate: dict[str, Any], preferences: dict[str, Any], jobs: list[dict[str, Any]]) -> str:
     schema = {
         "items": [{

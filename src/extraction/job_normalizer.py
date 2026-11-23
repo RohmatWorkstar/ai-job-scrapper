@@ -15,6 +15,7 @@ from src.ai.prompts import job_extraction_prompt
 from src.ai.provider_manager import AIManager
 from src.core.configuration import Settings
 from src.core.models import ContentKind, Evidence, JobOpportunity, RawDiscovery
+from src.extraction.contact_parser import find_emails
 from src.extraction.content_parser import (
     CountryDetector,
     SkillDetector,
@@ -60,9 +61,14 @@ def enrich_with_page(d: RawDiscovery, page: PageExtraction) -> None:
         "final_url": page.final_url, "closed_markers": page.closed_markers, "fetched_at": iso(page.retrieved_at),
         "has_job_posting_ld": bool(page.job_postings), "apply_links": page.apply_links[:3],
         "browser": page.rendered_with_browser,
+        "mailto": page.mailto_links[:10],
     }
     if not page.ok:
         return
+    # Collect application e-mails from the whole page before any text is replaced or truncated.
+    page_emails = find_emails(page.text, mailto=page.mailto_links)
+    if page_emails:
+        d.raw["contact_emails"] = page_emails
     jp = page.primary_posting
     if jp:
         d.raw["fetch"]["valid_through"] = iso(jp.valid_through) if jp.valid_through else None
@@ -164,6 +170,13 @@ class JobNormalizer:
             warnings.append("Date shown is the search engine's page date, not a confirmed posting date.")
         if d.application_url:
             add("application_url", d.application_url, d.application_url)
+        # Full text, before the description is truncated, so a closing "send your CV to ..." line is kept.
+        emails = find_emails(d.text, d.snippet, mailto=(d.raw.get("fetch") or {}).get("mailto"))
+        for e in d.raw.get("contact_emails") or []:
+            if e not in emails:
+                emails.append(e)
+        if emails:
+            add("application_email", emails[0], emails[0], "html_text")
 
         job = JobOpportunity(
             job_id=make_job_id(d),
@@ -191,6 +204,7 @@ class JobNormalizer:
             source_name=d.source_name,
             source_url=d.source_url,
             application_url=d.application_url,
+            application_emails=emails[:10],
             evidence=ev,
             warnings=warnings,
             content_kind=d.content_kind.value,

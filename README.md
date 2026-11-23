@@ -11,6 +11,136 @@ APIs you configure, and the CV goes out only with your consent and with contact 
 
 ---
 
+## Panduan cepat (Bahasa Indonesia)
+
+Ringkasan cara memakai project ini sehari-hari. Detail teknis ada di bagian berbahasa Inggris di bawah
+dan di [FINAL_DEVELOPMENT_REPORT.md](FINAL_DEVELOPMENT_REPORT.md).
+
+### A. Setup pertama kali (atau di komputer baru)
+
+```powershell
+cd "E:\NEW PROJECT 2027\Job-Scrapper"
+py -3.12 -m venv .venv                 # atau: uv venv .venv --python 3.12
+.venv\Scripts\activate
+pip install -r requirements.txt        # tanpa pip: uv pip install --python .venv\Scripts\python.exe -r requirements.txt
+copy .env.example .env                 # lalu isi .env (lihat tabel di bawah)
+```
+
+1. Taruh CV di folder `cv\`. **Wajib ada versi PDF**, karena Basic mode melampirkan PDF asli.
+   CV tidak pernah diubah oleh aplikasi.
+2. Isi `.env`. File ini tidak ikut ke git, jadi jangan pernah membagikan isinya.
+
+   | Variabel | Fungsi | Wajib? |
+   |---|---|---|
+   | `GMAIL_SENDER_ADDRESS` | Alamat Gmail pengirim | Ya, untuk kirim sungguhan |
+   | `GMAIL_APP_PASSWORD` | App Password Gmail (buat di <https://myaccount.google.com/apppasswords>, butuh 2-Step Verification) | Ya, untuk kirim sungguhan |
+   | `APPLICATION_TEST_RECIPIENT` | **Mode tes:** semua e-mail dibelokkan ke alamat ini, perusahaan tidak menerima apa pun | Isi hanya saat tes |
+   | `SEARCH_API_KEY` | Brave Search, untuk portal Indonesia, komunitas, dan postingan rekruter. **Tanpa ini hampir tidak ada lowongan yang bisa dilamar lewat e-mail.** | Sangat disarankan |
+   | `GEMINI_API_KEY` | AI untuk analisis lowongan dan CV yang disesuaikan per lowongan | Opsional |
+   | `APPLICANT_NAME` / `APPLICANT_PHONE` / `APPLICANT_LINKS` | Menimpa data kontak dari CV | Opsional |
+
+3. Cek semuanya dengan perintah di bawah. Setiap baris `TODO` menyertakan cara memperbaikinya.
+   ```powershell
+   python main.py --setup-check
+   ```
+
+### B. Rutinitas harian
+
+```powershell
+.venv\Scripts\activate
+
+# 1. Cari lowongan (Enter = pakai jawaban default/tersimpan)
+python main.py
+#    Laporan: reports\<tanggal>\JOB_SEARCH_RESULTS.xlsx (semua lowongan + link apply)
+#    Di akhir terlihat berapa lowongan yang menerima lamaran lewat e-mail.
+
+# 2. Siapkan lamaran (pilih salah satu)
+python main.py --apply basic    # CV PDF asli + e-mail template (cepat)
+python main.py --apply ai       # analisis lowongan, skor match, CV PDF disesuaikan per lowongan
+
+# 3. Review setiap lamaran yang muncul di layar:
+#    Approve and send now | Approve (queue) | Edit e-mail (Notepad) | Regenerate CV | Open CV PDF
+#    Decide later | Reject | Skip | Stop reviewing
+#    Lamaran yang belum diputuskan bisa direview lagi nanti:
+python main.py --review
+
+# 4. Kirim yang sudah di-approve (mematuhi batas kirim, berhenti sendiri saat batas tercapai)
+python main.py --send-queue
+
+# 5. Cek hasil
+python main.py --applications      # riwayat semua lamaran + status
+python main.py --sending-status    # kuota hari ini, jeda, status pause/stop
+```
+
+Lowongan yang **tidak** punya e-mail lamaran (kebanyakan board ATS: Greenhouse, Lever, dan
+sejenisnya) dilamar manual lewat kolom *Application URL* di file XLSX.
+
+### C. Mode tes vs kirim sungguhan
+
+| Keadaan | `dry_run` di `config/settings.yaml` | `APPLICATION_TEST_RECIPIENT` di `.env` | Hasil |
+|---|---|---|---|
+| Latihan tanpa internet | `true` | (bebas) | File `.eml` di `data\outbox\`, tidak ada yang terkirim |
+| Tes kirim ke inbox sendiri | `false` | `alamat-tes@gmail.com` | Semua e-mail dikirim ke alamat tes dengan subjek `[TEST for ...]` |
+| **Melamar sungguhan** | `false` | **kosong** | E-mail dikirim ke perusahaan |
+
+Setelah dry run atau tes, lamaran kembali ke status review. Untuk mengirim sungguhan, approve lagi
+setelah mode diganti.
+
+### D. Batas pengiriman (supaya akun Gmail aman)
+
+Setting saat ini (opsi A, ±100 lamaran dalam ±3 hari kerja), di `config/settings.yaml` →
+`applications.sending`:
+
+| Setting | Nilai |
+|---|---|
+| `max_per_day` | 35 |
+| `max_per_hour` | 8 |
+| `min_interval_seconds` | 120 |
+| Jam kirim | 08:00–18:00 WIB, Senin–Jumat |
+| `recipient_cooldown_days` | 30: **satu alamat penerima hanya menerima satu lamaran** dalam 30 hari |
+
+- Naikkan bertahap. Nilai di atas 50 per hari memunculkan peringatan, dan nilai di atas 250 ditolak sistem.
+- Kalau Gmail menolak karena limit, pengiriman otomatis berhenti 24 jam dan tidak dicoba ulang.
+- **Berhenti darurat:** jalankan `python main.py --emergency-stop` (atau buat file `data\STOP_SENDING`).
+  Untuk melanjutkan: `python main.py --resume-sending`.
+
+**Kirim otomatis sepanjang hari** lewat Windows Task Scheduler. Jalankan sekali di PowerShell:
+
+```powershell
+schtasks /Create /TN "JobScrapper-SendQueue" /SC MINUTE /MO 30 /ST 08:00 /ET 18:00 /D MON,TUE,WED,THU,FRI `
+  /TR "cmd /c cd /d \"E:\NEW PROJECT 2027\Job-Scrapper\" && .venv\Scripts\python.exe main.py --send-queue --defaults >> data\logs\send_queue.log 2>&1"
+# hapus: schtasks /Delete /TN "JobScrapper-SendQueue" /F
+```
+
+### E. Masalah umum
+
+| Pesan / gejala | Arti dan solusi |
+|---|---|
+| `0 opportunity(ies) ... by e-mail` / "None of these postings accepts applications by e-mail" | Sumber gratis hanya berisi board ATS yang memakai form web. Tambahkan `SEARCH_API_KEY`, atau lamar lewat link di XLSX. |
+| `Outside the sending window` | Di luar jam 08–18 hari kerja. Tunggu, atau ubah `sending_window`. |
+| `Hourly limit reached` / `Daily limit reached` | Batas kirim tercapai. Sisa antrean dikirim pada `--send-queue` berikutnya. |
+| `Sending paused: ...` | Gmail menolak atau ada beberapa kegagalan beruntun. Baca alasannya, lalu `python main.py --resume-sending`. |
+| `535` / `App Password rejected` | App Password salah atau dicabut. Buat yang baru dan perbarui `.env`. |
+| `LOCKED - delivery unknown` di `--applications` | Koneksi putus saat mengirim. Cek folder *Sent* di Gmail. Kalau **tidak** terkirim: `python main.py --requeue <ID>`. |
+| `already has an application from you` | Alamat itu sudah menerima atau sedang menunggu lamaran dari Anda (aturan satu alamat satu lamaran). |
+| Data di CV terbaca salah | Jalankan `python main.py --apply ai --limit 1 --dry-run` lalu pilih *Open CV PDF*. Pastikan CV memakai heading standar (PROFILE, EXPERIENCE, PROJECTS, SKILLS, EDUCATION). |
+
+### F. File dan folder penting
+
+| Lokasi | Isi |
+|---|---|
+| `cv\` | CV asli (tidak pernah diubah) |
+| `.env` | Credential (rahasia, tidak ikut ke git) |
+| `config\settings.yaml` | Semua setting: filter lowongan (`applications.eligibility`), batas kirim, mode |
+| `config\email_templates.yaml` | Teks e-mail (EN/ID); boleh diedit |
+| `reports\` | Laporan hasil pencarian (DOCX/XLSX) |
+| `data\generated_cvs\` | CV PDF yang disesuaikan per lowongan (AI mode) |
+| `data\outbox\` | E-mail hasil dry run (`.eml`) |
+| `data\database\job_intelligence.sqlite3` | Riwayat lowongan dan lamaran (backup sesekali) |
+| `data\logs\` | Log aplikasi (password dan alamat e-mail disensor) |
+
+---
+
 ## 1. Quick start (Windows 10/11)
 
 ```powershell
@@ -24,7 +154,7 @@ pip install -r requirements.txt
 # 3. (Optional but recommended) add API keys
 copy .env.example .env            # then edit .env
 
-# 4. Put your CV (PDF, DOCX or TXT) into the cv\ folder
+# 4. Put your CV (PDF recommended; DOCX, TXT, or DOC with antiword/LibreOffice) into the cv\ folder
 
 # 5. Run
 python main.py
@@ -299,7 +429,9 @@ register it in `PROVIDERS`.
 - PDFs that are only scanned images need OCR first. The app detects them and explains the problem; it does not OCR them.
 - The code is written against the documented Brave and Gemini APIs and tested with fixtures. It has not
   been run against live Brave or Gemini accounts in this project, so run `python main.py --check` after
-  you add your keys.
+  you add your keys. Gmail sending over SMTP (App Password) **was** tested live on 2026-11-23.
+- Postings from the free sources (ATS boards, remote feeds) almost never accept applications by e-mail;
+  e-mail applications mostly come from portals, community and social posts, which need a search key.
 
 ---
 
@@ -320,13 +452,24 @@ python main.py --send-queue                    # send approved applications with
 python main.py --applications                  # application history
 python main.py --sending-status                # counters, limits, pause / emergency-stop state
 python main.py --emergency-stop                # block all sending immediately (--resume-sending to clear)
-python main.py --gmail-auth                    # one-time Gmail OAuth consent (gmail.send scope only)
-                                               # or: GMAIL_APP_PASSWORD in .env -> sends via smtp.gmail.com
+python main.py --requeue <APPLICATION_ID>      # FAILED / unknown delivery -> back to review
+python main.py --gmail-auth                    # Gmail API OAuth (gmail.send scope only), if you use it
 ```
 
-**Dry run is the default.** `applications.sending.dry_run: true` writes `.eml` files to
-`data/outbox/` and never contacts Gmail. A dry-run "send" is a rehearsal: the application goes back
-to review, and you approve it again (with dry run off) to send it for real.
+Useful flags: `--session ID` (jobs from a specific search), `--limit N`, `--dry-run`,
+`--allow-duplicate` (asks for confirmation), `--auto` (automatic mode, also needs
+`mode: automatic` and `automatic_enabled: true`).
+
+| Topic | Behaviour |
+|---|---|
+| Gmail connection | `GMAIL_APP_PASSWORD` set → `smtp.gmail.com` (no Google Cloud project needed). Otherwise the Gmail API with OAuth (`--gmail-auth`). |
+| Dry run | `applications.sending.dry_run: true` writes `.eml` files to `data/outbox/` and never contacts Gmail |
+| Test recipient | `APPLICATION_TEST_RECIPIENT` sends for real, but only to that address. The employer receives nothing. |
+| Rehearsals | After a dry run or test send, the application returns to review. Approve it again in live mode to send it for real. |
+| Duplicates | One application per company + position, and **one per recipient address** within `recipient_cooldown_days` (30) |
+| Recipient extraction | Only addresses with an explicit "send your CV to …" instruction, or a recruiting inbox. Accommodation, accessibility, questions and fraud-report addresses are ignored. |
+| E-mail text | Plain and factual. The current role comes from the CV dates; one real CV bullet relevant to the job; a skill is called "used in work" only when the CV shows it in experience or projects. |
+| Limits | Option A: 35/day, 8/hour, 120 s apart, 08–18 on weekdays; automatic pause on Gmail limit errors; emergency stop |
 
 ---
 

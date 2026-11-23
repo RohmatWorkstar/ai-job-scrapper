@@ -375,7 +375,7 @@ def test_ai_mode_end_to_end(settings, sample_cv_path, tmp_path: Path) -> None:
         assert rec.generated_cv_path and Path(rec.generated_cv_path).name == "Acme_Pay_Backend_Developer_Custom_CV.pdf"
         assert rec.attachment_path == rec.generated_cv_path and rec.attachment_sha256 == file_sha256(rec.generated_cv_path)
         assert rec.match_score and rec.match["match"]["components"] and rec.match["email_method"] == "ai"
-        assert "Kind regards,\nAndi Pratama" in rec.email_body
+        assert "Best regards,\nAndi Pratama" in rec.email_body
         statuses = [e["to_status"] for e in mgr.tracker.events(rec.id)]
         assert statuses == ["NEW", "ANALYZED", "MATCHED", "PENDING_APPROVAL"]
         assert all("andi.pratama@example.com" not in p for p in prov.prompts)  # contact details never sent to AI
@@ -563,3 +563,46 @@ def test_test_recipient_redirect_never_reaches_employer(env) -> None:
     assert env["tracker"].last_attempts(1, transport="mock")[0]["outcome"] == "sent"  # real Gmail counters used
     msg_text = SendingScheduler._describe(after)
     assert msg_text.startswith("TEST:") and "employer received nothing" in msg_text
+
+
+
+def test_send_gate_refuses_second_mail_to_same_recipient(env) -> None:
+    tr = env["tracker"]
+    first = approved(tr, env["pdf"], n=0)
+    asyncio.run(env["service"].send_application(first.id))
+    # A second record for the same inbox created with an explicit duplicate authorisation is still caught
+    # by the send gate unless that record itself allows duplicates.
+    second = tr.create(mode="basic", company_name="Company 0 Other", job_title="Another Role",
+                       recipient_email="jobs@c0.co.id", email_subject="s", email_body="Dear team, hello there.",
+                       attachment_path=str(env["pdf"]), attachment_sha256=file_sha256(str(env["pdf"])),
+                       allow_duplicate=True, duplicate_authorization="test")
+    tr.conn.execute("UPDATE applications SET allow_duplicate=0 WHERE id=?", (second.id,))
+    tr.transition(second.id, S.PENDING_APPROVAL)
+    tr.approve(second.id)
+    env["clock"].advance(600)
+    with pytest.raises(SendRefused) as e:
+        asyncio.run(env["service"].send_application(second.id))
+    assert e.value.code == "duplicate_recipient" and len(env["transport"].sent) == 1
+
+
+def test_basic_prepare_keeps_one_job_per_recipient(settings, sample_cv_path, tmp_path: Path) -> None:
+    db = Database(settings.database_path)
+    try:
+        repo = Repository(db)
+        sid = "2026-11-24_090000-dup001"
+        repo.create_session(sid, None, SearchConfig())
+        mk = lambda jid, title, score: JobOpportunity(  # noqa: E731
+            job_id=jid, job_title=title, company_name="Grab", relevance_score=score, relevance_category="RELEVANT",
+            verification_status="LIKELY_OPEN", application_emails=["careers@grab.com"], country="Indonesia",
+            required_skills=["Node.js"], job_description="Send your CV to careers@grab.com")
+        repo.save_opportunities(sid, [mk("g1", "Backend Developer, Payments", 70), mk("g2", "Backend Developer, Maps", 75)])
+        repo.finish_session(sid, "completed", {}, None)
+        cv, profile = candidate(settings, sample_cv_path)
+        mgr = ApplicationManager(settings, db)
+        asyncio.run(mgr.set_candidate(cv, profile, sample_cv_path, use_ai=False))
+        _, jobs = mgr.load_jobs(sid)
+        summary = mgr.prepare_basic(jobs, make_pdf(tmp_path / "cv.pdf"), session_id=sid)
+        assert [r.job_key for r in summary.prepared] == ["g2"]           # highest score wins
+        assert len(summary.duplicates) == 1 and summary.duplicates[0][0].job_id == "g1"
+    finally:
+        db.close()

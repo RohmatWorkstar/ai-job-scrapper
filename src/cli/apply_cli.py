@@ -100,7 +100,7 @@ def _build_base_transport(settings: Settings, dry_run: bool) -> tuple[MailTransp
 def build_service(settings: Settings, db: Database, *, dry_run: bool,
                   identity_name: str = "", own_email: str | None = None) -> EmailService:
     transport, sender = build_transport(settings, dry_run)
-    tracker = ApplicationTracker(db)
+    tracker = ApplicationTracker(db, recipient_cooldown_days=float(settings.get("applications.recipient_cooldown_days", 30)))
     guard = SendingGuard.from_settings(settings, tracker, transport.name)
     own = own_email or os.environ.get("APPLICANT_EMAIL", "").strip() or os.environ.get("GMAIL_SENDER_ADDRESS", "").strip()
     return EmailService(tracker, guard, transport, sender=sender,

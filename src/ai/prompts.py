@@ -147,10 +147,14 @@ def application_email_prompt(job: dict[str, Any], candidate: dict[str, Any], lan
     schema = {"subject": "short e-mail subject naming the position", "body": "e-mail body WITHOUT greeting signature block"}
     lang = "Indonesian (Bahasa Indonesia, formal)" if language == "id" else "English"
     return (
-        f"Write a concise, professional job application e-mail in {lang} (120-220 words). Mention the exact job title "
-        "and company name, briefly introduce the candidate, highlight 2-3 relevant experiences or skills, and say that "
-        "the CV is attached. " + NO_FABRICATION + " Do not include contact details, links, placeholders like [Name], "
-        "or a signature: those are added separately. Start the body with a salutation such as 'Dear Hiring Team,'. "
+        f"Write a short job application e-mail in {lang} (90-170 words) the way an experienced professional writes "
+        "to a recruiter: plain, specific and calm. Mention the exact job title and company name, say what the candidate "
+        "does now (current vs previous role exactly as the dates show), give ONE concrete example taken from the CV, "
+        "and say that the CV is attached. " + NO_FABRICATION + " Only call a skill 'used in work' if it appears in the "
+        "candidate's experience or projects. Do not use: 'I am writing to', 'I would welcome the opportunity', "
+        "'passionate', 'excited', 'leverage', 'perfect fit', 'proven track record', 'mainly', 'expert', 'extensive', "
+        "superlatives or buzzwords. Do not include contact details, links, placeholders like [Name], or a signature: "
+        "those are added separately. Start the body with a salutation such as 'Dear Hiring Team,'. "
         "Return JSON:\n" + json.dumps(schema, indent=1)
         + "\n\nJob:\n" + fence(json.dumps(job, ensure_ascii=False))
         + "\n\nCandidate (from the CV):\n" + fence(json.dumps(candidate, ensure_ascii=False))

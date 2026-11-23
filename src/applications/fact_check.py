@@ -34,6 +34,32 @@ _NUMBER_WORDS = {"two": "2", "three": "3", "four": "4", "five": "5", "six": "6",
 _NUMBER_WORD_RE = re.compile(r"(?i)\b(" + "|".join(_NUMBER_WORDS) + r")\b")
 
 
+# Phrases that make an application read as machine-written or as a sales pitch.
+CLICHES = re.compile(
+    r"(?i)(i am writing to|i'm writing to|i would welcome the opportunity|i would love the opportunity|"
+    r"passionate|thrilled|excited to|eager to|leverag|synerg|dynamic team|perfect fit|esteemed|"
+    r"proven track record|results-driven|go-getter|hit the ground running|\bdelve|furthermore|moreover|"
+    r"in today's|fast-paced|cutting-edge|world-class|i am confident|i'm confident|seamless|"
+    r"align(?:s)? perfectly|unique blend|valuable asset|wealth of|testament to|rest assured)")
+# Strength claims that need support in the CV text.
+OVERCLAIM = re.compile(r"(?i)\b(mainly|primarily|expert|expertise|extensive|extensively|deep knowledge|"
+                       r"deep expertise|mastery|highly skilled|seasoned|guru|ninja|rockstar|specialist in)\b")
+
+
+def check_tone(text: str, cv_text: str) -> list[str]:
+    """Clichés, and strength claims the CV itself does not make."""
+    problems: list[str] = []
+    found = sorted({m.group(0).lower() for m in CLICHES.finditer(text)})
+    if found:
+        problems.append(f"sounds machine-written/salesy: {', '.join(found)}")
+    cv_lower = cv_text.lower()
+    claims = sorted({m.group(0).lower() for m in OVERCLAIM.finditer(text)} - {w for w in
+                    (m.group(0).lower() for m in OVERCLAIM.finditer(cv_lower))})
+    if claims:
+        problems.append(f"strength claims not in the CV: {', '.join(claims)}")
+    return problems
+
+
 def numbers_in(text: str) -> set[str]:
     """Digits plus number words ("five years" -> 5), so spelled-out numbers cannot slip through."""
     nums = {n.replace(",", "").rstrip(".") for n in _NUM.findall(text)}
@@ -95,6 +121,7 @@ def check_free_text(text: str, cv_text: str, detector: SkillDetector, *, allowed
         problems.append(f"makes claims not in the CV: {', '.join(sorted(claims))}")
     if _CONTACT.search(text) or _PLACEHOLDER.search(text):
         problems.append("contains links, e-mail addresses or placeholders")
+    problems += check_tone(text, cv_text)
     if min_overlap:
         words = _words(text)
         base = set(_words(cv_text + " " + allowed_text))

@@ -48,7 +48,8 @@ class ApplicationManager:
         self.settings = settings
         self.db = db
         self.repo = Repository(db)
-        self.tracker = ApplicationTracker(db)
+        self.tracker = ApplicationTracker(
+            db, recipient_cooldown_days=float(settings.get("applications.recipient_cooldown_days", 30)))
         self.ai = ai
         self.allow_freemail = bool(settings.get("applications.allow_freemail_recipients", True))
         self.max_attachment = int(float(settings.get("applications.sending.max_attachment_mb", 10)) * 1024 * 1024)
@@ -117,7 +118,8 @@ class ApplicationManager:
                 summary.no_email += 1
                 continue
             rc = select_recipient(job, own_email=self.doc.identity.email, allow_freemail=self.allow_freemail)
-            existing = self.tracker.find_blocking(make_dedupe_key(job.company_name, job.job_title, rc.email))
+            existing = self.tracker.find_blocking(make_dedupe_key(job.company_name, job.job_title, rc.email),
+                                                  recipient=rc.email if rc.valid else None)
             if existing and not allow_duplicate:
                 summary.duplicates.append((job, existing))
                 continue

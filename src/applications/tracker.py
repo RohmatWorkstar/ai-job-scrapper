@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import uuid
+from datetime import timedelta
 from dataclasses import fields
 from typing import Any, Iterable
 
@@ -55,9 +56,11 @@ def _now() -> str:
 
 
 class ApplicationTracker:
-    def __init__(self, db: Database) -> None:
+    def __init__(self, db: Database, *, recipient_cooldown_days: float = 30) -> None:
         self.db = db
         self.conn = db.conn
+        # One application per recipient mailbox: a SENT application blocks the same address for this long.
+        self.recipient_cooldown_days = recipient_cooldown_days
 
     # ------------------------------------------------------------- internals
     def _exec(self, sql: str, params: Iterable[Any] = ()) -> sqlite3.Cursor:
@@ -99,14 +102,36 @@ class ApplicationTracker:
             rows = self.conn.execute("SELECT * FROM applications ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
         return [self._row_to_record(r) for r in rows]
 
-    def find_blocking(self, dedupe_key: str, exclude_id: str | None = None) -> ApplicationRecord | None:
-        """Existing active/sent application for the same company+position (or an ambiguous delivery)."""
+    def find_blocking(self, dedupe_key: str, exclude_id: str | None = None,
+                      recipient: str | None = None) -> ApplicationRecord | None:
+        """Existing application that blocks a new one:
+        * same company + position, active or sent (or with an unknown delivery), or
+        * same recipient address, active, or sent within ``recipient_cooldown_days``
+          (one employer inbox never receives two applications from you)."""
         rows = self.conn.execute("SELECT * FROM applications WHERE dedupe_key=? ORDER BY created_at", (dedupe_key,)).fetchall()
         for r in rows:
             rec = self._row_to_record(r)
             if rec.id == exclude_id:
                 continue
             if ApplicationStatus(rec.status) in BLOCKING_STATUSES or rec.error_kind == "delivery_unknown":
+                return rec
+        if recipient:
+            return self.find_recipient_blocking(recipient, exclude_id)
+        return None
+
+    def find_recipient_blocking(self, recipient: str, exclude_id: str | None = None) -> ApplicationRecord | None:
+        cutoff = iso(utc_now() - timedelta(days=self.recipient_cooldown_days)) or ""
+        rows = self.conn.execute("SELECT * FROM applications WHERE lower(recipient_email)=? ORDER BY created_at",
+                                 (recipient.strip().lower(),)).fetchall()
+        for r in rows:
+            rec = self._row_to_record(r)
+            if rec.id == exclude_id:
+                continue
+            status = ApplicationStatus(rec.status)
+            if status == ApplicationStatus.SENT:
+                if (rec.sent_at or "") >= cutoff:
+                    return rec
+            elif status in BLOCKING_STATUSES or rec.error_kind == "delivery_unknown":
                 return rec
         return None
 
@@ -129,12 +154,16 @@ class ApplicationTracker:
                                     dedupe_key=values.pop("dedupe_key", ""), created_at=now, updated_at=now, **values)
         if not rec.dedupe_key:
             rec.dedupe_key = make_dedupe_key(rec.company_name, rec.job_title, rec.recipient_email)
-        existing = self.find_blocking(rec.dedupe_key)
+        existing = self.find_blocking(rec.dedupe_key, recipient=rec.recipient_email)
         if existing is not None:
             if not allow_duplicate:
+                same_job = existing.dedupe_key == rec.dedupe_key
                 raise DuplicateApplicationError(
-                    f"An application for '{rec.job_title}' at '{rec.company_name or '?'}' already exists "
-                    f"(id {existing.id}, status {existing.status}).", existing)
+                    (f"An application for '{rec.job_title}' at '{rec.company_name or '?'}' already exists "
+                     if same_job else
+                     f"{rec.recipient_email} already has an application from you ('{existing.job_title}' at "
+                     f"'{existing.company_name or '?'}'); one application per recipient ")
+                    + f"(id {existing.id}, status {existing.status}).", existing)
             if not duplicate_authorization:
                 raise DuplicateApplicationError("A duplicate application needs a recorded authorisation.", existing)
         rec.allow_duplicate = bool(allow_duplicate and existing is not None)

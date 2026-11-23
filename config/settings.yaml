@@ -197,6 +197,7 @@ applications:
   basic_cv_file: ""                               # PDF in cv/ attached in Basic mode; empty = ask / the only PDF
   max_jobs_per_run: 30                            # applications prepared per run
   allow_freemail_recipients: true                 # gmail.com/yahoo.com recruiter addresses (flagged in review)
+  recipient_cooldown_days: 30                     # one application per recipient address within this period
 
   eligibility:                                    # Basic-mode filters (AI mode uses ai.min_match_score)
     min_relevance_score: 58

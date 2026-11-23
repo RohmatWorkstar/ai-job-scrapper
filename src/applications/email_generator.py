@@ -18,7 +18,7 @@ import yaml
 from src.ai.prompts import application_email_prompt, redact_personal
 from src.ai.provider_manager import AIManager
 from src.applications.cv_document import CVDocument
-from src.applications.fact_check import check_free_text
+from src.applications.fact_check import check_free_text, check_tone
 from src.applications.job_analyzer import JobAnalysis, detect_language
 from src.applications.models import CandidateIdentity
 from src.core.configuration import Settings
@@ -58,6 +58,83 @@ def _tidy(text: str) -> str:
     return "\n".join(l.rstrip() for l in text.strip().splitlines())
 
 
+_STOP_TERMS = set("senior junior lead staff principal engineer developer software position role team with and the for "
+                  "remote hybrid onsite full time part".split())
+_VERB_START = re.compile(r"^(?:[A-Z][a-z]+ed|Built|Led|Ran|Made|Wrote|Set|Grew|Cut|Drove|Won|Took|Kept|Held|Rebuilt|"
+                         r"Redesigned|Rewrote|Shipped|Launched|Owned|Ported|Moved|Brought|Taught|Ran)\b")
+
+
+def _article(noun: str) -> str:
+    return "an" if noun[:1].lower() in "aeiou" else "a"
+
+
+def _join(items: list[str], indonesian: bool) -> str:
+    if len(items) == 1:
+        return items[0]
+    return ", ".join(items[:-1]) + (" dan " if indonesian else " and ") + items[-1]
+
+
+def _mentions(text: str, skill: str) -> bool:
+    return bool(text) and bool(re.search(rf"(?i)(?<![\w+#]){re.escape(skill)}(?:\.js)?(?![\w+#])", text))
+
+
+def _job_terms(job: JobOpportunity) -> list[str]:
+    words = [w for w in re.findall(r"[a-z][a-z0-9+#.]{3,}", job.job_title.lower()) if w not in _STOP_TERMS]
+    return list(dict.fromkeys([s.lower() for s in job.required_skills + job.preferred_skills] + words))
+
+
+_CLAUSE_CUT = re.compile(r",\s+(?:accompanied|while|which|featuring|supported|resulting|ensuring|enabling|"
+                         r"leading|allowing|making|thereby|helping|in order)\b")
+
+
+def _shorten(bullet: str) -> str:
+    """Cut a long CV bullet at its first trailing clause (no words are added or changed)."""
+    if len(bullet) <= 150:
+        return bullet
+    m = _CLAUSE_CUT.search(bullet, 60)
+    return bullet[:m.start()].rstrip(" ,;") + "." if m else bullet
+
+
+def _nice(name: str) -> str:
+    return " ".join(w.capitalize() if len(w) > 3 else w for w in name.split()) if name.isupper() else name
+
+
+def _achievement_sentence(doc: CVDocument | None, terms: list[str], current: Any, headline: str = "") -> str:
+    """One verbatim CV bullet relevant to the job, as 'In my current role, I built ...'."""
+    if doc is None:
+        return ""
+    candidates: list[tuple[int, int, str, str]] = []
+    for idx, e in enumerate(doc.experience[:2]):
+        if idx == 0 and current is not None and re.search(r"(?i)present|current|now", e.dates or ""):
+            lead = "In my current role, I "
+        elif e.title and e.company and headline and e.title.lower() == headline.lower():
+            lead = f"In my previous role at {e.company}, I "
+        elif e.title and e.company:
+            lead = f"As {_article(e.title)} {e.title} at {e.company}, I "
+        else:
+            lead = ""
+        for b in e.bullets:
+            candidates.append((_score(b, terms), idx, lead, b))
+    for p in doc.project_entries[:4]:
+        for b in p.bullets:
+            name = _nice(p.title)
+            label = name if name.lower().endswith(("project", "system", "platform", "app")) else f"{name} project"
+            candidates.append((_score(b, terms), 5, f"On the {label}, I ", b))
+    best = [c for c in candidates if c[0] > 0 and c[2] and len(c[3]) <= 260 and _VERB_START.match(c[3])]
+    if not best:
+        return ""
+    best.sort(key=lambda c: (-c[0], c[1], len(c[3])))
+    _, _, lead, bullet = best[0]
+    bullet = _shorten(bullet)
+    sentence = lead + bullet[0].lower() + bullet[1:]
+    return sentence if sentence.endswith((".", "!", ")")) else sentence + "."
+
+
+def _score(text: str, terms: list[str]) -> int:
+    low = text.lower()
+    return sum(1 for t in terms if re.search(rf"(?<![\w+#]){re.escape(t)}(?![\w+#])", low))
+
+
 class EmailGenerator:
     def __init__(self, settings: Settings, ai: AIManager | None = None) -> None:
         self.settings = settings
@@ -82,46 +159,90 @@ class EmailGenerator:
     def template_email(self, job: JobOpportunity, profile: CandidateProfile, identity: CandidateIdentity, *,
                        matched_skills: list[str] | None = None, doc: CVDocument | None = None,
                        language: str | None = None) -> GeneratedEmail:
+        """Plain, human e-mail. Every sentence is built from a fact in the CV:
+        current/most recent role (from the experience dates), the CV's own years statement, one real
+        CV bullet that fits the job, and job skills that the CV shows in actual work."""
         lang = language or self.language_for(job)
         tpl = self.templates.get(lang) or self.templates["en"]
         indonesian = lang == "id"
+        company = (job.company_name or "").strip()
+        headline = profile.current_title or ""
+
+        # ---- years: the CV's own wording ("3+ years") when present, never rounded up
+        years_text = ""
         years = profile.experience_years
-        years_phrase = ""
         if years and years >= 1:
             y = int(years)
-            more = years - y >= 0.25  # "over 4 years" only when it really is more than 4
             plus = bool(doc and re.search(rf"(?<!\d){y}\s*\+\s*(?:years?|yrs?|tahun)", doc.source_text, re.I))
+            more = years - y >= 0.25
+            years_text = f"{y}+" if plus else (f"lebih dari {y}" if indonesian and more else
+                                                (f"over {y}" if more else f"{y}"))
+
+        # ---- current / most recent role, from the experience entry dates
+        entry = doc.experience[0] if doc and doc.experience else None
+        role_sentence = ""
+        if entry and entry.title and entry.company:
+            current = bool(re.search(r"(?i)present|current|now|sekarang|saat\s+ini", entry.dates or ""))
             if indonesian:
-                years_phrase = f" dengan pengalaman {y}+ tahun" if plus else                     f" dengan pengalaman {'lebih dari ' if more else ''}{y} tahun"
+                role_sentence = (f"Saat ini saya bekerja sebagai {entry.title} di {entry.company}" if current else
+                                 f"Terakhir saya bekerja sebagai {entry.title} di {entry.company}")
+                if years_text and headline:
+                    role_sentence += f", dengan pengalaman {years_text} tahun sebagai {headline}"
+                role_sentence += "."
             else:
-                years_phrase = f" with {y}+ years of experience" if plus else                     f" with {'over ' if more else ''}{y} year{'s' if y != 1 else ''} of experience"
+                role_sentence = (f"I'm currently {_article(entry.title)} {entry.title} at {entry.company}" if current
+                                 else f"Most recently, I worked as {_article(entry.title)} {entry.title} at {entry.company}")
+                if years_text and headline:
+                    role_sentence += f", and I have {years_text} years of experience as {_article(headline)} {headline}"
+                role_sentence += "."
+        elif headline:
+            role_sentence = (f"Saya seorang {headline}" + (f" dengan pengalaman {years_text} tahun" if years_text else "")
+                             + ".") if indonesian else \
+                (f"I'm {_article(headline)} {headline}" + (f" with {years_text} years of experience" if years_text else "")
+                 + ".")
+
+        # ---- one real CV bullet that fits the job (verbatim; English CVs only)
+        terms = _job_terms(job)
+        achievement = "" if indonesian else _achievement_sentence(doc, terms, entry, headline)
+
+        # ---- skills the job asks for AND the CV shows in actual work (bullets), else only "listed"
         cv_skills = {s.lower() for s in profile.skills}
-        skills = [s for s in (matched_skills or []) if s.lower() in cv_skills][:4]
-        if not skills:
-            skills = [s for s in job.required_skills if s.lower() in cv_skills][:4]
-        skills_phrase = ""
-        if skills:
-            joined = ", ".join(skills[:-1]) + (f" {'dan' if indonesian else 'and'} " if len(skills) > 1 else "") + skills[-1]
-            skills_phrase = f", terutama menggunakan {joined}" if indonesian else f", working mainly with {joined}"
-        experience_phrase = ""
-        if doc and doc.experience:
-            e = doc.experience[0]
-            if e.title and e.company:
-                experience_phrase = (f"Pengalaman terakhir saya adalah sebagai {e.title} di {e.company}." if indonesian
-                                     else f"Most recently, I have worked as {e.title} at {e.company}.")
-        company = (job.company_name or "").strip()
+        wanted = [s for s in (list(matched_skills or []) + list(job.required_skills) + list(job.preferred_skills))
+                  if s.lower() in cv_skills]
+        wanted = list(dict.fromkeys(wanted))
+        work_text = " ".join(b for e in ((doc.experience + doc.project_entries) if doc else []) for b in e.bullets)
+        used = [s for s in wanted if _mentions(work_text, s) and not _mentions(achievement, s)][:3]
+        listed = [s for s in wanted if s not in used and not _mentions(achievement, s)][:3]
+        skills_sentence = ""
+        if used:
+            joined = _join(used, indonesian)
+            skills_sentence = (f"Saya sudah menggunakan {joined} secara langsung dalam pekerjaan saya, sesuai dengan "
+                               "kebutuhan posisi ini." if indonesian else
+                               f"I've worked hands-on with {joined}, which {'are' if len(used) > 1 else 'is'} part of "
+                               "this role's requirements.")
+        elif listed:
+            joined = _join(listed, indonesian)
+            skills_sentence = (f"Keahlian saya juga mencakup {joined}." if indonesian else
+                               f"My skill set also includes {joined}.")
+
         if indonesian:
             greeting = f"Yth. Tim Rekrutmen {company}," if company else "Yth. Tim Rekrutmen,"
         else:
-            greeting = f"Dear Hiring Team at {company}," if company else "Dear Hiring Team,"
+            greeting = f"Dear {company} Hiring Team," if company else "Dear Hiring Team,"
         values = {
             "greeting": greeting,
             "job_title": job.job_title.strip(),
             "company": company or ("perusahaan Anda" if indonesian else "your company"),
             "name": identity.name,
-            "current_title": profile.current_title or ("profesional" if indonesian else "professional"),
-            "years_phrase": years_phrase, "skills_phrase": skills_phrase, "experience_phrase": experience_phrase,
+            "role_sentence": role_sentence,
+            "achievement_sentence": achievement,
+            "skills_sentence": skills_sentence,
             "signature": signature(identity),
+            # placeholders of the earlier templates (custom templates keep working)
+            "current_title": headline or ("profesional" if indonesian else "professional"),
+            "years_phrase": (f" dengan pengalaman {years_text} tahun" if indonesian else
+                             f" with {years_text} years of experience") if years_text else "",
+            "skills_phrase": "", "experience_phrase": "",
         }
         try:
             subject = _tidy(str(tpl["subject"]).format(**values))
@@ -167,6 +288,7 @@ class EmailGenerator:
             if name.strip():
                 checked = re.sub(re.escape(name.strip()), " ", checked, flags=re.I)
         problems += check_free_text(checked, doc.source_text, self.detector, allowed_numbers=years)
+        problems += [p for p in check_tone(body, doc.source_text) if p not in problems]
         if job.job_title.lower() not in (body + " " + subject).lower():
             problems.append("does not mention the exact job title")
         if job.company_name and job.company_name.lower() not in body.lower():
@@ -176,7 +298,7 @@ class EmailGenerator:
         if problems:
             fallback.notes.append("AI e-mail rejected by the fact check (" + "; ".join(problems) + "); template used.")
             return fallback
-        closing = "Hormat saya," if lang == "id" else "Kind regards,"
+        closing = "Hormat saya," if lang == "id" else "Best regards,"
         if not re.search(r"(?im)^(kind regards|best regards|regards|sincerely|hormat saya|salam)[,.]?\s*$", body):
             body = f"{body}\n\n{closing}"
         body = f"{body}\n{signature(doc.identity)}"

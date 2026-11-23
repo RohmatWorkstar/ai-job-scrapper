@@ -34,7 +34,7 @@ built on the existing scraper, database, AI layer and CLI.
 - **Dry run is the default.** Until you switch it off, nothing is sent: e-mails are written as `.eml`
   files to `data/outbox/`.
 
-**Test status:** 193 offline tests pass and 1 opt-in live test is skipped. Before this work there
+**Test status:** 198 offline tests pass and 1 opt-in live test is skipped. Before this work there
 were 92 tests. A post-implementation review fixed 18 issues; see §14.
 
 **Not tested against real services:** live Gmail OAuth and sending, and real Gemini responses for
@@ -353,7 +353,7 @@ through `CREATE TABLE IF NOT EXISTS`.
 
 ## 9. Testing Results
 
-Command: `python -m pytest` → **193 passed, 1 skipped** (the opt-in live network test). The new tests
+Command: `python -m pytest` → **198 passed, 1 skipped** (the opt-in live network test). The new tests
 are in `tests/unit/test_applications.py` and `tests/integration/test_application_flow.py`.
 
 ### Successful tests
@@ -624,3 +624,31 @@ Set `APPLICATION_TEST_RECIPIENT=you@example.com` in `.env` to send everything fo
 that address. Subjects are prefixed `[TEST for <employer>]`, and the employer receives nothing. The
 applications return to review afterwards, so they can still be sent for real later. Clear the variable
 for real applications.
+
+---
+
+## 16. User feedback after the real-case test (2026-11-23)
+
+| Feedback | Cause | Fix |
+|---|---|---|
+| Duplicate e-mails with the same content | The two test runs each used a fresh database copy, so the history was not shared. Separately, a real gap: two jobs at the same company, sent to the same inbox, were both allowed, because duplicate prevention worked per company + title only. | **One application per recipient address:** an active application, or one sent within `applications.recipient_cooldown_days` (30), blocks every other application to that address. Within one run the highest-scoring job is kept and the rest are reported as duplicates. The send gate re-checks before sending (`duplicate_recipient`). |
+| Language sounded AI-generated | Template clichés: "I am writing to apply", "I would welcome the opportunity to discuss how I can contribute" | New plain templates: greeting, one-line intent, current role from the CV dates, ONE real CV bullet relevant to the job (quoted, trimmed at a trailing clause, never reworded), and a short close. AI e-mails are rejected and replaced by the template when they contain clichés ("passionate", "leverage", "I am writing to"…). |
+| Message did not match the CV | "working mainly with Java and Go" (listed skills, not the main stack); "Most recently, I have worked as…" for the current role | A skill is described as used in work only when it appears in an experience or project bullet; otherwise "My skill set also includes…". "Present" roles read "I'm currently…". Strength words (mainly, expert, extensive…) are rejected unless the CV uses them. |
+
+Example of the new template, generated from the real CV for a real Grab posting:
+
+```text
+Dear Grab Hiring Team,
+
+I'd like to apply for the Senior Software Engineer, Backend - Business Platform position.
+
+I'm currently a Developer Supervisor at PT International Services Pacific Cross, and I have 3+ years of
+experience as a Fullstack Engineer. In my previous role at PT Media Telekomunikasi Mandiri, I developed
+robust backend REST APIs for real-time data synchronization between servers and user interfaces.
+
+My skill set also includes Java and Go.
+
+My CV is attached. I'd be happy to talk about the role at a time that suits you.
+
+Best regards,
+```

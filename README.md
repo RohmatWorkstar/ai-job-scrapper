@@ -252,7 +252,7 @@ discoveries, opportunities, source references, verification history, errors and 
 
 ```powershell
 pip install -r requirements-dev.txt
-python -m pytest                      # offline suite: 193 tests (1 live test skipped)
+python -m pytest                      # offline suite: 198 tests (1 live test skipped)
 $env:RUN_LIVE_TESTS="1"; python -m pytest tests/integration/test_live_optin.py   # opt-in network test
 ```
 

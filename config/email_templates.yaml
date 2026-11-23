@@ -1,25 +1,32 @@
 # Application e-mail templates (Basic mode, and AI-mode fallback).
-# Placeholders: {greeting} {job_title} {company} {name} {current_title} {years_phrase} {skills_phrase}
-#               {experience_phrase} {signature}
-# Every phrase is built only from facts in your CV; empty phrases disappear cleanly.
-# {greeting} is "Dear Hiring Team at <Company>," (or "Dear Hiring Team," when the company is unknown).
-# The language is chosen from the job posting (Indonesian postings get the "id" template), or fixed
-# with applications.email_language in settings.yaml.
+#
+# Placeholders (each is built only from facts in your CV, and disappears cleanly when empty):
+#   {greeting}             "Dear Acme Hiring Team," / "Dear Hiring Team," (company unknown)
+#   {job_title} {company} {name} {signature}
+#   {role_sentence}        "I'm currently a Developer Supervisor at X, and I have 3+ years of experience as a
+#                          Fullstack Engineer."  (current vs most recent role comes from the CV dates)
+#   {achievement_sentence} one real CV bullet that fits the job, quoted as written (English only)
+#   {skills_sentence}      job skills your CV shows in actual work ("I've worked hands-on with ..."),
+#                          or only "My skill set also includes ..." when they appear just in the skills list
+# Older placeholders still work: {current_title} {years_phrase} {skills_phrase} {experience_phrase}
+#
+# Keep it short and plain. Recruiters skim: avoid "I am writing to...", "I would welcome the
+# opportunity...", "passionate", "proven track record".
 
 en:
   subject: "Application for {job_title} - {name}"
   body: |
     {greeting}
 
-    I am writing to apply for the {job_title} position. I am a {current_title}{years_phrase}{skills_phrase}.
+    I'd like to apply for the {job_title} position.
 
-    {experience_phrase}
+    {role_sentence} {achievement_sentence}
 
-    Please find my CV attached. I would welcome the opportunity to discuss how I can contribute to {company}.
+    {skills_sentence}
 
-    Thank you for your time and consideration.
+    My CV is attached. I'd be happy to talk about the role at a time that suits you.
 
-    Kind regards,
+    Best regards,
     {signature}
 
 id:
@@ -27,13 +34,13 @@ id:
   body: |
     {greeting}
 
-    Dengan hormat, saya bermaksud melamar posisi {job_title}. Saya seorang {current_title}{years_phrase}{skills_phrase}.
+    Dengan hormat, saya ingin melamar untuk posisi {job_title}.
 
-    {experience_phrase}
+    {role_sentence}
 
-    Bersama e-mail ini saya lampirkan CV saya. Saya berharap dapat berdiskusi lebih lanjut mengenai kontribusi yang dapat saya berikan untuk {company}.
+    {skills_sentence}
 
-    Atas perhatian Bapak/Ibu, saya ucapkan terima kasih.
+    CV saya terlampir. Saya siap berdiskusi lebih lanjut pada waktu yang Bapak/Ibu tentukan.
 
     Hormat saya,
     {signature}

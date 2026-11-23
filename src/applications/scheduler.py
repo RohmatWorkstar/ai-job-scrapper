@@ -20,7 +20,7 @@ from src.applications.models import ApplicationRecord, ApplicationStatus
 from src.applications.tracker import ApplicationTracker
 
 _SKIP_RECORD_CODES = {"approval_mismatch", "invalid_recipient", "attachment", "not_approved", "locked",
-                      "domain_limit", "invalid_message"}
+                      "domain_limit", "invalid_message", "duplicate_recipient"}
 
 
 @dataclass

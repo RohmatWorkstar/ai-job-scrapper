@@ -225,6 +225,12 @@ class EmailService:
         ok, why = validate_address(rec.recipient_email or "", own_email=self.own_email)
         if not ok:
             raise SendRefused(f"Recipient of {rec.id} is invalid: {why}", code="invalid_recipient")
+        if not rec.allow_duplicate:
+            other = self.tracker.find_recipient_blocking(rec.recipient_email or "", exclude_id=rec.id)
+            if other is not None and other.status in (ApplicationStatus.SENT.value, ApplicationStatus.APPROVED.value) \
+                    and (other.status == ApplicationStatus.SENT.value or other.send_lock):
+                raise SendRefused(f"{rec.recipient_email} already received an application from you ({other.id}, "
+                                  f"'{other.job_title}'); one application per recipient.", code="duplicate_recipient")
         try:
             validate_attachment(rec.attachment_path, self.max_attachment_bytes)
         except AttachmentError as exc:

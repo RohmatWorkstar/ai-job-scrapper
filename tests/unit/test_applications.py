@@ -720,7 +720,7 @@ def test_email_generator_template_and_ai_fallback(settings, cv_doc) -> None:
                  "Actions CI/CD. My CV is attached for your review, and I would welcome a conversation.")
     good_ai, _ = fake_ai({"job application e-mail": {"subject": "Application: Backend Developer", "body": good_body}})
     ok = asyncio.run(EmailGenerator(settings, good_ai).ai_email(j, a, profile, doc, ["Node.js"]))
-    assert ok.method == "ai" and ok.body.startswith("Dear Hiring Team") and "Kind regards,\nAndi Pratama" in ok.body
+    assert ok.method == "ai" and ok.body.startswith("Dear Hiring Team") and "Best regards,\nAndi Pratama" in ok.body
 
 
 # ---------------------------------------------------------------- Gmail SMTP
@@ -972,7 +972,8 @@ def test_modern_bulleted_cv_is_structured(settings, tmp_path: Path) -> None:
     assert "Backend:" in text and "Programming Languages:" in text and "PRISA - Digital Insurance Platform" in text
     assert tcv.skill_groups[0][0] in ("Backend", "Database & Performance")  # job-relevant group first
     e = EmailGenerator(settings).template_email(j, profile, doc.identity, doc=doc)
-    assert "with 3+ years of experience" in e.body and "Budi Santoso" in e.subject
+    assert "I have 3+ years of experience as a Fullstack Engineer" in e.body and "Budi Santoso" in e.subject
+    assert "I'm currently a Developer Supervisor at PT Contoh Asuransi" in e.body
 
 
 def test_eligibility_skips_onsite_abroad_and_german_market(settings) -> None:
@@ -998,3 +999,54 @@ def test_alias_skill_counts_as_matched(settings) -> None:
     j = job(required_skills=["Go"])
     m = CVMatcher(settings, profile).match(j, JobAnalyzer(settings).analyze_deterministic(j), doc)
     assert m.missing_skills == [] and m.matched_skills[0]["skill"] == "Go"
+
+
+
+# ---------------------------------------------------- user feedback (2026-11-23)
+CLICHE_WORDS = ("i am writing to", "i would welcome", "passionate", "working mainly", "mainly", "leverage",
+                "contribute to", "proven track record", "excited")
+
+
+def test_template_email_is_plain_and_factual(settings) -> None:
+    from src.cv.models import ParsedCV
+
+    cv = ParsedCV(filename="cv.txt", file_format="txt", text=MODERN_CV, pages=1, sha256="x")
+    profile = CVAnalyzer(settings).analyze(cv)
+    doc = structure_cv(cv, profile)
+    # Job wants NestJS (used in a CV bullet) and Python (only in the skills list) and Kubernetes (not in CV).
+    j = job(job_title="Backend Engineer", company_name="Acme", required_skills=["NestJS", "Python", "Kubernetes"])
+    e = EmailGenerator(settings).template_email(j, profile, doc.identity, matched_skills=["NestJS", "Python"], doc=doc)
+    body = e.body.lower()
+    for phrase in CLICHE_WORDS:
+        assert phrase not in body, phrase
+    assert "i'm currently a developer supervisor at pt contoh asuransi" in body        # "Present" -> currently
+    assert "kubernetes" not in body                                                     # never claimed
+    assert "nestjs" in body                                                             # in the quoted CV bullet
+    assert "python" in body and "my skill set also includes python" in body             # only listed, said honestly
+    # The quoted achievement is a real CV bullet (verbatim after the lead-in).
+    assert "led the engineering team building the hr system (react, laravel, nestjs)" in body
+    assert len(e.body.split()) < 170
+
+
+def test_no_second_application_to_the_same_recipient(tmp_path: Path, tracker: ApplicationTracker) -> None:
+    pdf = make_pdf(tmp_path / "cv.pdf")
+    first = new_record(tracker, pdf, company="Grab", title="Backend Engineer, Business Platform",
+                       recipient="careers@grab.com")
+    with pytest.raises(DuplicateApplicationError, match="one application per recipient"):
+        new_record(tracker, pdf, company="Grab", title="Backend Engineer, Transaction Platform",
+                   recipient="Careers@Grab.com")
+    tracker.skip(first.id, "not interested")          # a skipped application no longer blocks the inbox
+    new_record(tracker, pdf, company="Grab", title="Backend Engineer, Transaction Platform", recipient="careers@grab.com")
+
+
+def test_ai_email_with_cliches_or_overclaims_falls_back(settings, cv_doc) -> None:
+    _, profile, doc = cv_doc
+    j = job(job_title="Backend Developer", company_name="Acme")
+    a = JobAnalyzer(settings).analyze_deterministic(j)
+    body = ("Dear Hiring Team,\n\nI am writing to express my passion for the Backend Developer role at Acme. I am an "
+            "expert in Node.js and PostgreSQL and I designed REST APIs with Node.js, Express and Prisma. My CV is "
+            "attached and I would welcome the opportunity to discuss how I can contribute to your team.")
+    ai, _ = fake_ai({"job application e-mail": {"subject": "Backend Developer application", "body": body}})
+    out = asyncio.run(EmailGenerator(settings, ai).ai_email(j, a, profile, doc, ["Node.js"]))
+    assert out.method == "template"
+    assert any("machine-written" in n or "strength claims" in n for n in out.notes)

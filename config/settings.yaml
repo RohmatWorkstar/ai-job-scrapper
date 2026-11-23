@@ -246,9 +246,9 @@ applications:
     account_type: personal           # personal | workspace | workspace_trial (sets the documented ceiling)
     # Conservative defaults. Google's documented limits (personal ~500/day, Workspace 2,000/day) are
     # the points where Gmail BLOCKS sending, not safe targets. Values above half of them are refused.
-    max_per_day: 20
-    max_per_hour: 6
-    min_interval_seconds: 180
+    max_per_day: 35                  # option A: ~100 applications over ~3 working days
+    max_per_hour: 8
+    min_interval_seconds: 120
     max_per_recipient_domain_per_day: 2
     max_consecutive_failures: 3      # automatic pause after this many failures in a row
     max_invalid_recipients_per_day: 3

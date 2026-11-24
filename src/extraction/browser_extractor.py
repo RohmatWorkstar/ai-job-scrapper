@@ -26,8 +26,16 @@ class BrowserRenderer:
     def __init__(self) -> None:
         self._pw: Any = None
         self._browser: Any = None
-        self._lock = asyncio.Lock()
+        self._lock: asyncio.Lock | None = None
+        self._lock_loop: asyncio.AbstractEventLoop | None = None
         self.unavailable_reason: str | None = None
+
+    def _get_lock(self) -> asyncio.Lock:
+        loop = asyncio.get_running_loop()
+        if self._lock is None or self._lock_loop is not loop:
+            self._lock = asyncio.Lock()
+            self._lock_loop = loop
+        return self._lock
 
     @classmethod
     def shared(cls) -> "BrowserRenderer":
@@ -69,7 +77,7 @@ class BrowserRenderer:
             return None
         if http is not None and not await http.robots_allowed(url):
             return None
-        async with self._lock:
+        async with self._get_lock():
             if not await self._ensure():
                 return None
             context = await self._browser.new_context(accept_downloads=False, java_script_enabled=True)

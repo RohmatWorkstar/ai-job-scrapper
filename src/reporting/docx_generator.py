@@ -182,6 +182,7 @@ class DocxReportGenerator:
             ("Potentially relevant", str(c["potentially_relevant"])),
             ("Needs manual review", str(c["needs_manual_review"])),
             ("Unverified opportunities", str(c["unverified"])),
+            ("Email-applicable opportunities", str(c["email_applicable"])),
             ("New since previous searches", str(c["new_since_previous_searches"])),
             ("AI assistance", d.ai_status),
         ])
@@ -254,6 +255,9 @@ class DocxReportGenerator:
             rows.append(("To verify", ", ".join(j.match.needs_verification)))
         if j.warnings:
             rows.append(("Warnings", " | ".join(j.warnings)))
+        app_status = d.application_statuses.get(j.job_id)
+        if app_status:
+            rows.append(("Application status", app_status))
         table = self._kv_table(rows)
         for label, url, text in (("Original source", j.source_url, f"{j.source_name}: {j.source_url}"),
                                  ("Application link", j.application_url or "", j.application_url or "")):
@@ -265,6 +269,14 @@ class DocxReportGenerator:
                 add_hyperlink(cells[1].paragraphs[0], url, text)
             else:
                 cells[1].text = "Not identified - use the original source"
+        if j.application_emails:
+            cells = table.add_row().cells
+            cells[0].text = "Application e-mail"
+            cells[0].paragraphs[0].runs[0].bold = True
+            _shade(cells[0], "EEF2F7")
+            add_hyperlink(cells[1].paragraphs[0], f"mailto:{j.application_emails[0]}", j.application_emails[0])
+            if len(j.application_emails) > 1:
+                cells[1].paragraphs[0].add_run("  (" + ", ".join(j.application_emails[1:4]) + ")")
         if j.additional_sources:
             cells = table.add_row().cells
             cells[0].text = f"Also found at ({len(j.additional_sources)})"

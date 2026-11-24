@@ -30,7 +30,7 @@ SECTION_KEYWORDS: dict[str, list[str]] = {
 ROLE_WORDS = re.compile(
     r"(?i)\b(developer|engineer|programmer|analyst|manager|designer|consultant|architect|lead|specialist|intern|"
     r"scientist|administrator|tester|devops|sre|officer|staff|technician|coordinator|head|director|pengembang|"
-    r"full[\s-]?stack|back[\s-]?end|front[\s-]?end)\b"
+    r"supervisor|qa|scrum\s+master|product\s+owner|tech\s+lead|full[\s-]?stack|back[\s-]?end|front[\s-]?end)\b"
 )
 
 _MONTHS = {
@@ -160,10 +160,13 @@ def seniority_from_years(years: float | None) -> str:
     return "senior"  # "lead" is only assigned from explicit title evidence
 
 
+_BULLET_STRIP = " •-*–·▪●◦»▸►‣⁃◆■➢➤✓✔→\t"
+
+
 def _short_lines(section: str, limit: int, max_len: int = 140) -> list[str]:
     out: list[str] = []
     for line in section.splitlines():
-        l = line.strip(" •-*–·\t")
+        l = line.strip(_BULLET_STRIP)
         if 3 <= len(l) <= max_len and l not in out:
             out.append(l)
         if len(out) >= limit:
@@ -189,7 +192,7 @@ class CVAnalyzer:
                     return seg.strip(" ,-")
         exp = sections.by_name.get("experience", "")
         for line in exp.splitlines()[:25]:
-            l = line.strip(" •-*–·")
+            l = line.strip(_BULLET_STRIP)
             if ROLE_WORDS.search(l) and len(l) <= 80 and not _RANGE_RE.search(l):
                 return re.split(r"\s+(?:at|@|-|–|\|)\s+", l)[0].strip(" ,-")
             if ROLE_WORDS.search(l) and len(l) <= 120:

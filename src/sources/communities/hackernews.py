@@ -12,7 +12,7 @@ import re
 from src.core.models import ContentKind, QuerySpec, RawDiscovery, SourceRunReport, SourceType
 from src.extraction.html_extractor import html_to_text
 from src.sources.base import BaseJobSource, DiscoveryContext, http_error_to_exception
-from src.utils.date_time import parse_datetime, utc_now
+from src.utils.date_time import parse_datetime, utc_now, within_window
 
 API = "https://hn.algolia.com/api/v1"
 _ROLE_SEG = re.compile(r"(?i)(engineer|developer|programmer|architect|devops|sre|scientist|analyst|full[\s-]?stack|"
@@ -65,6 +65,12 @@ class HackerNewsHiringSource(BaseJobSource):
             return []
         story_id, title = story
         report.notes.append(f"Thread: {title}")
+        window = ctx.config.publication_window_days
+        effective_window = max(window, 35) if (window is not None and window >= 7) else window
+        if effective_window != window:
+            report.notes.append(
+                f"Monthly thread window extended from {window}d to {effective_window}d so mid-month runs keep active posts."
+            )
         seen: set[str] = set()
         out: list[RawDiscovery] = []
         now = utc_now()
@@ -86,7 +92,7 @@ class HackerNewsHiringSource(BaseJobSource):
                     continue
                 seen.add(hit["objectID"])
                 report.items_scanned += 1
-                text = html_to_text(hit.get("comment_text"), 6000)
+                text = html_to_text(hit.get("comment_text"), 40000)
                 company, role, location = parse_header(text)
                 created = parse_datetime(hit.get("created_at"))
                 d = RawDiscovery(
@@ -97,7 +103,7 @@ class HackerNewsHiringSource(BaseJobSource):
                     published_at_evidence="HN comment created_at (post date)", content_kind=ContentKind.COMMUNITY_POST,
                     query=kw, external_id=f"hn:{hit['objectID']}",
                 )
-                if not ctx.prefilter.date_ok(created):
+                if within_window(created, effective_window) is False:
                     continue
                 keep, _ = ctx.prefilter.title_relevant(d.title, [], text)
                 if keep:

@@ -89,7 +89,7 @@ class RedditSource(BaseJobSource):
             out.append(RawDiscovery(
                 source_type=self.category, source_name=f"Reddit r/{p.get('subreddit')}",
                 source_url=f"https://www.reddit.com{p.get('permalink', '')}", title=title[:200], retrieved_at=now,
-                text=(p.get("selftext") or "")[:6000], snippet=(p.get("selftext") or "")[:300],
+                text=(p.get("selftext") or "")[:40000], snippet=(p.get("selftext") or "")[:300],
                 published_at=created, post_created_at=created, published_at_evidence="Reddit created_utc (post date)",
                 content_kind=ContentKind.COMMUNITY_POST, query=query.text, external_id=f"reddit:{p.get('id')}",
             ))

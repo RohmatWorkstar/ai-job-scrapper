@@ -77,8 +77,12 @@ class EligibilityFilter:
             age = age_days(job.published_at or job.post_created_at)
             if age is not None and age > float(self.max_age_days):
                 fail(f"Posting is {age:.0f} days old (max {self.max_age_days}).")
-        if self.require_email and not job.application_emails:
-            fail("No application e-mail address in the posting.")
+        if self.require_email:
+            if not job.application_emails:
+                fail("No application e-mail address in the posting.")
+        else:
+            if not (job.application_url or job.source_url):
+                fail("No application URL or source URL in the posting.")
         if not self.onsite_abroad and self.home_country and job.work_arrangement in ("onsite", "hybrid")                 and job.country and job.country.lower() != self.home_country.lower():
             fail(f"{job.work_arrangement.capitalize()} role in {job.country} (outside {self.home_country}); "
                  "set allow_onsite_abroad: true to include it.")

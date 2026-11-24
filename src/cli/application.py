@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import platform
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -21,25 +22,35 @@ from src.core.pipeline import PipelineState
 from src.cv.models import CandidateProfile, ParsedCV
 from src.cv.parser import list_cv_files, parse_cv
 from src.cv.profile_builder import ProfileBuilder
+from src.storage.database import Database
 from src.storage.history import PreferenceStore
+from src.storage.repository import Repository
 from src.utils.logger import setup_logging
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(prog="python main.py", description="AI Job Intelligence & Discovery System",
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("--search", action="store_true",
+                   help="Start the job search flow directly (skip the Interactive Hub)")
     p.add_argument("--cv", help="CV file name inside the cv/ folder (skips the CV selection prompt)")
     p.add_argument("--defaults", action="store_true",
                    help="Non-interactive: use saved preferences/defaults for every question and start immediately")
     p.add_argument("--no-ai", action="store_true", help="Do not use the AI provider for this run")
+    p.add_argument("--ai-consent", action="store_true",
+                   help="Explicitly consent to sending a redacted CV copy to Gemini in non-interactive mode")
     p.add_argument("--max-queries", type=int, help="Override budget.max_search_engine_queries for this run")
     p.add_argument("--check", action="store_true", help="Check configuration and source availability, then exit")
     p.add_argument("--history", action="store_true", help="List previous search sessions, then exit")
     p.add_argument("--report", metavar="SESSION_ID", help="Regenerate DOCX/XLSX reports for a stored session")
-    g = p.add_argument_group("application automation (e-mail applications)")
-    g.add_argument("--apply", choices=["basic", "ai"],
-                   help="Prepare applications from scraped jobs: 'basic' = original CV PDF, 'ai' = tailored CV per job")
+    g = p.add_argument_group("application automation (e-mail & Web/ATS assist)")
+    g.add_argument("--apply", choices=["basic", "ai", "web"],
+                   help="Prepare applications: 'basic' (original PDF), 'ai' (tailored CV), 'web' (Web/ATS assist)")
+    g.add_argument("--channel", choices=["email", "web", "all"],
+                   help="Target channel for --apply basic|ai (default: email; 'all' = email first, fallback to web)")
     g.add_argument("--session", metavar="SESSION_ID", help="Use jobs from this search session (default: latest)")
+    g.add_argument("--all-recent", nargs="?", const=14, type=int, default=None, metavar="DAYS",
+                   help="Load deduplicated jobs across all sessions from the last N days (default: 14)")
     g.add_argument("--limit", type=int, help="Maximum applications to prepare (or e-mails to send with --send-queue)")
     g.add_argument("--review", action="store_true", help="Review applications waiting for approval")
     g.add_argument("--send-queue", action="store_true", help="Send approved applications within the sending limits")
@@ -52,6 +63,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                    help="Show what is set up for applications and what you still need to do manually")
     g.add_argument("--gmail-auth", action="store_true", help="Authorise Gmail sending (OAuth 2.0, gmail.send scope)")
     g.add_argument("--applications", action="store_true", help="List the application history")
+    g.add_argument("--status", metavar="STATUS", help="Filter --applications by status (e.g. INTERVIEW, APPLIED_WEB)")
+    g.add_argument("--update-status", nargs=2, metavar=("APPLICATION_ID", "STATUS"),
+                   help="Update an application stage (applied_web|interview|offer|employer_rejected|withdrawn)")
+    g.add_argument("--note", default="", help="Optional note recorded with --update-status")
     g.add_argument("--sending-status", action="store_true", help="Show sending counters, limits, pause/stop state")
     g.add_argument("--emergency-stop", action="store_true", help="Block all sending immediately")
     g.add_argument("--resume-sending", action="store_true", help="Clear the emergency stop and automatic pauses")
@@ -97,7 +112,7 @@ class Application:
         import os
 
         extra_secrets = [os.environ.get("GMAIL_APP_PASSWORD", "").strip()]
-        extra_secrets += [s.replace(" ", "") for s in extra_secrets]
+        extra_secrets += [re.sub(r"\s+", "", s) for s in extra_secrets if s]
         log_path = setup_logging(self.settings.log_directory,
                                  secrets=self.settings.credentials.secret_values() + [s for s in extra_secrets if s])
         ui.ok("Configuration loaded.")
@@ -105,8 +120,8 @@ class Application:
         cv_dir.mkdir(parents=True, exist_ok=True)
         ui.ok(f"CV directory detected: {cv_dir}")
         try:
-            orch = Orchestrator(self.settings)
-            orch.close()
+            db = Database(self.settings.database_path)
+            db.close()
         except StorageError as exc:
             ui.error(str(exc))
             return False
@@ -173,7 +188,7 @@ class Application:
             return False
         saved = self.saved.get("ai_cv_consent")
         if not self.interactive:
-            return bool(saved) if saved is not None else True
+            return bool(getattr(self.args, "ai_consent", False) or saved is True)
         import questionary
 
         answer = questionary.confirm(
@@ -194,17 +209,18 @@ class Application:
             await http.aclose()
 
     # ------------------------------------------------------------- questions
-    def questionnaire(self, profile: CandidateProfile) -> Any:
+    def questionnaire(self, profile: CandidateProfile, *, use_ai: bool | None = None) -> Any:
         assert self.settings is not None and self.prefs is not None
         saved_answers = self.saved.get("answers")
         answers = default_answers(self.settings, saved_answers, profile)
+        ai_flag = bool(use_ai) if use_ai is not None else bool(self.saved.get("ai_cv_consent", False))
         while True:
             if self.interactive:
                 ui.section("SEARCH CONFIGURATION")
                 ui.console.print("[dim]Press Enter to keep the highlighted/checked default for each question.[/]")
                 answers = ask_questions(self.settings, answers, profile)
             config = build_search_config(answers, self.settings, profile)
-            ui.show_config(config, credentials_summary(self.settings, bool(self.saved.get("ai_cv_consent", True))))
+            ui.show_config(config, credentials_summary(self.settings, ai_flag))
             if not self.interactive:
                 break
             import questionary
@@ -229,27 +245,28 @@ class Application:
         return config
 
     # ------------------------------------------------------------------ run
-    async def run_pipeline(self, profile: CandidateProfile, config: Any, profile_id: int | None) -> int:
+    async def run_pipeline(self, profile: CandidateProfile, config: Any, profile_id: int | None, *,
+                           use_ai: bool | None = None) -> int:
         assert self.settings is not None
         state = PipelineState()
         orch = Orchestrator(self.settings, state=state)
         try:
             with Live(ui.progress_renderable(state), console=ui.console, refresh_per_second=4, transient=False) as live:
                 state.listener = lambda s: live.update(ui.progress_renderable(s))
-                result = await orch.run(profile, config, profile_id=profile_id)
+                result = await orch.run(profile, config, profile_id=profile_id, use_ai=use_ai)
                 live.update(ui.progress_renderable(state))
         finally:
             orch.close()
         if result.data is not None:
             ui.show_completion(result.data, result.report_files, result.status)
             with_email = sum(1 for j in result.data.jobs if j.application_emails)
+            with_url = sum(1 for j in result.data.jobs if (j.application_url or j.source_url))
             if with_email:
-                ui.info(f"{with_email} opportunity(ies) accept applications by e-mail. Next step: "
-                        "python main.py --apply basic   (or --apply ai for a tailored CV per job)")
-            else:
-                ui.info("None of these postings accepts applications by e-mail (ATS boards and job feeds use "
-                        "web forms): apply through the links in the report. A SEARCH_API_KEY adds job portals, "
-                        "community and social posts, where e-mail applications are common.")
+                ui.info(f"{with_email} opportunity(ies) accept e-mail and {with_url} have web/ATS links. Next step: "
+                        "python main.py --apply ai --channel all   (or --apply web / --apply basic)")
+            elif with_url:
+                ui.info(f"{with_url} opportunity(ies) apply via web/ATS forms. Prepare tailored CVs + cover notes with: "
+                        "python main.py --apply web   (add SEARCH_API_KEY for more direct-email postings)")
         for e in result.errors:
             ui.warn(e)
         return 0 if result.report_files else 1
@@ -266,15 +283,15 @@ class Application:
         use_ai = await asyncio.to_thread(self.ai_consent)
         ui.info("Analyzing candidate profile" + (" (deterministic + Gemini)..." if use_ai else " (deterministic)..."))
         profile = await self.build_profile(cv, use_ai)
-        orch = Orchestrator(self.settings)
+        db = Database(self.settings.database_path)
         try:
-            profile_id = orch.repo.save_profile(profile)
+            profile_id = Repository(db).save_profile(profile)
         finally:
-            orch.close()
+            db.close()
         ui.show_profile(profile)
         ui.ok("Candidate profile generated.")
-        config = await asyncio.to_thread(self.questionnaire, profile)
-        return await self.run_pipeline(profile, config, profile_id)
+        config = await asyncio.to_thread(self.questionnaire, profile, use_ai=use_ai)
+        return await self.run_pipeline(profile, config, profile_id, use_ai=use_ai)
 
     # ---------------------------------------------------------- utilities
     async def check_sources(self) -> int:
@@ -324,11 +341,11 @@ class Application:
         from rich.table import Table
 
         assert self.settings is not None
-        orch = Orchestrator(self.settings)
+        db = Database(self.settings.database_path)
         try:
-            sessions = orch.repo.list_sessions(30)
+            sessions = Repository(db).list_sessions(30)
         finally:
-            orch.close()
+            db.close()
         import json
 
         from src.utils.date_time import format_local, from_iso
@@ -380,6 +397,10 @@ def run(argv: list[str] | None = None) -> int:
         handled = run_apply_command(app)
         if handled is not None:
             return handled
+        if app.interactive and not args.search:
+            from src.cli.hub import InteractiveHub
+
+            return InteractiveHub(app).run()
         return asyncio.run(app.main_flow())
     except Cancelled:
         ui.warn("Cancelled by user. No search was started.")

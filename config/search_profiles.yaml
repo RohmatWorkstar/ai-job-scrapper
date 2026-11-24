@@ -74,15 +74,17 @@ ats_sites:
 # Company ATS boards always crawled through their documented public job-board APIs.
 # All entries below were confirmed to exist on 2026-11-22. Add your own target companies.
 ats_seed_boards:
-  greenhouse: [gitlab, cloudflare, stripe, figma, databricks, airbnb, canonical, xendit, vercel, mongodb,
-               elastic, twilio, datadog, okta, coinbase, deliveroo, wise, mozilla, binance, agoda]
+  greenhouse: [xendit, flip, kargo, agoda, wise, gitlab, cloudflare, stripe, figma, databricks, airbnb, canonical,
+               vercel, mongodb, elastic, twilio, datadog, okta, coinbase, deliveroo, mozilla, binance]
   # Lever/Ashby APIs do not return the company name: give it explicitly as {token, name}.
   lever:
-    - {token: palantir, name: Palantir}
     - {token: ninjavan, name: Ninja Van}
+    - {token: palantir, name: Palantir}
     - {token: spotify, name: Spotify}
     - {token: binance, name: Binance}
   ashby:
+    - {token: flip, name: Flip}
+    - {token: airwallex, name: Airwallex}
     - {token: openai, name: OpenAI}
     - {token: notion, name: Notion}
     - {token: ramp, name: Ramp}
@@ -92,11 +94,10 @@ ats_seed_boards:
     - {token: posthog, name: PostHog}
     - {token: replit, name: Replit}
     - {token: cohere, name: Cohere}
-    - {token: airwallex, name: Airwallex}
     - {token: oyster, name: Oyster}
     - {token: hopper, name: Hopper}
     - {token: plaid, name: Plaid}
-  smartrecruiters: [Grab, Canva, ServiceNow, BoschGroup]
+  smartrecruiters: [Grab, Canva, Wise, DeliveryHero, ServiceNow, BoschGroup]
 
 # Official company career pages fetched directly (robots.txt respected).
 # Pages exposing schema.org JobPosting JSON-LD give the best results.

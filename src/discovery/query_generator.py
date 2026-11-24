@@ -170,6 +170,20 @@ class QueryGenerator:
             for (country, code) in targets[:3]:
                 out.append(self._q(f'"{skills[0]}" "{skills[1]}" developer job {country or "remote"}',
                                    SourceType.SEARCH_ENGINE, "skills", config, country=country, code=code))
+        # Dedicated e-mail application queries so Brave Search actively surfaces direct-email postings.
+        for role in roles[:2]:
+            if "en" in langs:
+                for (country, code) in targets[:2]:
+                    where = country or "remote"
+                    out.append(self._q(
+                        f'"{role}" ("send your CV" OR "apply via email") {where} {arr}',
+                        SourceType.SEARCH_ENGINE, "email", config, country=country, code=code, role=role,
+                    ))
+            if "id" in langs and config.wants_indonesia:
+                out.append(self._q(
+                    f'lowongan "{role}" ("kirim CV" OR "kirim lamaran") email {arr}',
+                    SourceType.SEARCH_ENGINE, "email", config, lang="id", country="Indonesia", code="ID", role=role,
+                ))
         for term in prefs.positive[:2]:
             out.append(self._q(f'"{roles[0]}" {term} hiring', SourceType.SEARCH_ENGINE, "preference", config,
                                role=roles[0]))
@@ -200,18 +214,20 @@ class QueryGenerator:
         out: list[QuerySpec] = []
         phrases_en = (self.profiles.get("hiring_phrases") or {}).get("en", ["we are hiring"])
         phrases_id = (self.profiles.get("hiring_phrases") or {}).get("id", ["lowongan"])
+        idx = 0
         for site in self.profiles.get("social_sites") or []:
-            for i, role in enumerate(roles[:3]):
-                phrase = phrases_en[i % len(phrases_en)]
-                country, code = targets[i % len(targets)]
+            for role in roles[:3]:
+                phrase = phrases_en[idx % len(phrases_en)]
+                country, code = targets[idx % len(targets)]
                 out.append(self._q(f'site:{site["site"]} "{phrase}" "{role}" {country or "remote"}',
                                    SourceType.SOCIAL_MEDIA, f"social:{site['name']}", config, country=country,
                                    code=code, site=site["site"], role=role))
                 if "id" in langs and config.wants_indonesia:
-                    p_id = phrases_id[i % len(phrases_id)]
+                    p_id = phrases_id[idx % len(phrases_id)]
                     out.append(self._q(f'site:{site["site"]} "{p_id}" "{role}"', SourceType.SOCIAL_MEDIA,
                                        f"social:{site['name']}", config, lang="id", country="Indonesia",
                                        code="ID", site=site["site"], role=role))
+                idx += 1
         return _interleave_by_purpose(out)
 
     def _communities(self, roles, targets, config, langs, keywords) -> list[QuerySpec]:
@@ -238,15 +254,17 @@ class QueryGenerator:
     def _ats(self, roles, targets, config) -> list[QuerySpec]:
         out: list[QuerySpec] = []
         seen_sites: set[str] = set()
+        idx = 0
         for ats in self.profiles.get("ats_sites") or []:
             if ats["name"] in seen_sites and ats["name"] == "Greenhouse":
                 continue
             seen_sites.add(ats["name"])
-            for i, role in enumerate(roles[:3]):
-                country, code = targets[i % len(targets)]
+            for role in roles[:3]:
+                country, code = targets[idx % len(targets)]
                 out.append(self._q(f'site:{ats["site"]} "{role}" {country or "remote"}', SourceType.ATS,
                                    f"ats:{ats['name']}", config, site=ats["site"], role=role, country=country,
                                    code=code))
+                idx += 1
         return _interleave_by_purpose(out)
 
     def _careers(self, roles, targets, config) -> list[QuerySpec]:

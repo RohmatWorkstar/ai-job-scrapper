@@ -70,6 +70,7 @@ def validate_applications_settings(settings: Settings) -> None:
             errors.append("applications.ai.match_weights must map skills/title/experience/keywords to "
                           "non-negative numbers with a positive sum")
     _num(errors, app, "max_jobs_per_run", "applications", 1, 1000)
+    _num(errors, app, "recipient_cooldown_days", "applications", 0, 3650)
     lang = str(app.get("email_language", "auto"))
     if lang not in ("auto", "en", "id"):
         errors.append("applications.email_language must be auto, en or id")
@@ -81,7 +82,7 @@ def validate_applications_settings(settings: Settings) -> None:
     if s.get("smtp_port", 587) not in (465, 587):
         errors.append("applications.sending.smtp_port must be 587 (STARTTLS) or 465 (TLS)")
     _num(errors, s, "automatic_min_match_score", "applications.sending", 0, 100)
-    _num(errors, s, "max_attachment_mb", "applications.sending", 0.1, 25)
+    _num(errors, s, "max_attachment_mb", "applications.sending", 0.1, 18)
     _num(errors, s, "max_send_attempts", "applications.sending", 1, 5)
     _num(errors, s, "max_wait_seconds", "applications.sending", 0, 7200)
     try:
@@ -130,10 +131,10 @@ def setup_checklist(settings: Settings, jobs_with_email: int | None = None) -> l
     test = (os.environ.get("APPLICATION_TEST_RECIPIENT", "").strip()
             or str(settings.get("applications.sending.test_recipient", "") or "").strip())
     if test:
-        items.append(CheckItem("TEST MODE (recipient redirect)", validate_address(test, own_email=sender)[0],
+        items.append(CheckItem("TEST MODE (recipient redirect)", validate_address(test)[0],
                                f"all e-mails go to {test}; employers receive nothing",
-                               "Use an address you own that differs from GMAIL_SENDER_ADDRESS; clear it for real "
-                               "applications", "live"))
+                               "Use a valid e-mail address you own (may match GMAIL_SENDER_ADDRESS); clear it for "
+                               "real applications", "live"))
     kind = transport_kind(settings)
     items.append(CheckItem("Gmail transport", True, "SMTP with App Password" if kind == "smtp" else
                            "Gmail API with OAuth (gmail.send)", "applications.sending.transport in settings.yaml",

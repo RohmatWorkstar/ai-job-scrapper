@@ -19,11 +19,18 @@ from src.cv.models import CandidateProfile
 from src.utils.date_time import within_window
 
 GENERIC_TECH_TITLE = re.compile(r"(?i)\b(engineer|developer|programmer|software|swe|sde|coder|technologist|pengembang)\b")
+CORE_SWE_TITLE = re.compile(
+    r"(?i)\b(software|back[\s-]?end|front[\s-]?end|full[\s-]?stack|devops|sre|site\s+reliability|"
+    r"data\s+engineer|ml\s+engineer|ai\s+engineer|mobile\s+engineer|web\s+developer|platform\s+engineer|"
+    r"systems?\s+engineer|cloud\s+engineer|qa\s+engineer|security\s+engineer)\b"
+)
 NON_TECH_TITLE = re.compile(
     r"(?i)\b(sales|account\s+(?:executive|manager)|recruit(?:er|ing)|talent|marketing|legal|counsel|finance|"
     r"accountant|accounting|nurse|driver|warehouse|customer\s+success|support\s+specialist|hr\b|people\s+partner|"
     r"payroll|procurement|copywriter|teacher|chef|cashier|mechanical|civil|electrical|hardware|chemical|"
-    r"pilates|instructor|solutions?\s+engineer|sales\s+engineer)\b"
+    r"pilates|instructor|solutions?\s+engineer|sales\s+engineer|gtm|go[\s-]to[\s-]market|client\s+partner|"
+    r"partnerships|business\s+development|operations\s+manager|strategy\s+and\s+operations|"
+    r"certification\s+assessment|field\s+marketing|revenue\s+operations|deal\s+desk)\b"
 )
 
 
@@ -64,10 +71,10 @@ class Prefilter:
 
     def title_relevant(self, title: str, tags: list[str] | None = None, text: str = "") -> tuple[bool, str]:
         t = title or ""
+        if NON_TECH_TITLE.search(t) and not CORE_SWE_TITLE.search(t):
+            return False, "non-matching job family"
         if self._role_re and self._role_re.search(t):
             return True, "title matches target role"
-        if NON_TECH_TITLE.search(t):
-            return False, "non-matching job family"
         if self._skill_re and self._skill_re.search(t + " " + " ".join(tags or [])):
             return True, "title/tags mention a candidate skill"
         if self.wants_generic and GENERIC_TECH_TITLE.search(t):

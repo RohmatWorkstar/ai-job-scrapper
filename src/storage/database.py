@@ -7,10 +7,9 @@ from pathlib import Path
 
 from src.core.exceptions import StorageError
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
-# Version 2 (application automation) adds new tables only; version-1 tables are untouched,
-# so existing databases upgrade in place through CREATE TABLE IF NOT EXISTS.
+# Version 2/3 (application automation + multi-channel lifecycle) adds tables/columns cleanly in place.
 APPLICATION_SCHEMA = """
 CREATE TABLE IF NOT EXISTS applications (
     id TEXT PRIMARY KEY,
@@ -21,6 +20,10 @@ CREATE TABLE IF NOT EXISTS applications (
     job_url TEXT,
     recipient_email TEXT,
     mode TEXT NOT NULL,
+    channel TEXT NOT NULL DEFAULT 'email',
+    closed_by TEXT,
+    sender_name TEXT,
+    follow_up_at TEXT,
     match_score REAL,
     match_json TEXT,
     original_cv_path TEXT,
@@ -53,6 +56,7 @@ CREATE TABLE IF NOT EXISTS applications (
 CREATE INDEX IF NOT EXISTS ix_app_dedupe ON applications(dedupe_key);
 CREATE INDEX IF NOT EXISTS ix_app_status ON applications(status);
 CREATE INDEX IF NOT EXISTS ix_app_job ON applications(job_key);
+CREATE INDEX IF NOT EXISTS ix_app_recipient ON applications(lower(recipient_email));
 
 CREATE TABLE IF NOT EXISTS application_events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -217,9 +221,23 @@ class Database:
             raise StorageError(f"Cannot open database {path}: {exc}") from exc
 
     def migrate(self) -> None:
+        self.conn.executescript(SCHEMA)
+        self.conn.executescript(APPLICATION_SCHEMA)
         with self.conn:
-            self.conn.executescript(SCHEMA)
-            self.conn.executescript(APPLICATION_SCHEMA)
+            existing_cols = {
+                row["name"] for row in self.conn.execute("PRAGMA table_info(applications)").fetchall()
+            }
+            v3_columns = (
+                ("channel", "TEXT NOT NULL DEFAULT 'email'"),
+                ("closed_by", "TEXT"),
+                ("sender_name", "TEXT"),
+                ("follow_up_at", "TEXT"),
+            )
+            for col_name, col_def in v3_columns:
+                if col_name not in existing_cols:
+                    self.conn.execute(f"ALTER TABLE applications ADD COLUMN {col_name} {col_def}")
+            self.conn.execute("CREATE INDEX IF NOT EXISTS ix_app_channel ON applications(channel)")
+            self.conn.execute("CREATE INDEX IF NOT EXISTS ix_app_recipient ON applications(lower(recipient_email))")
             self.conn.execute("INSERT OR REPLACE INTO meta(key, value) VALUES ('schema_version', ?)", (str(SCHEMA_VERSION),))
 
     def close(self) -> None:

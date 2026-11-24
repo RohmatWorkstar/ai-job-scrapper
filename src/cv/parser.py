@@ -27,13 +27,39 @@ def list_cv_files(directory: Path) -> list[Path]:
     return sorted(files, key=lambda p: p.name.lower())
 
 
+_EXTENDED_BULLETS = re.compile(r"[●▪◦▸►‣⁃◆■➢➤✓✔→]")
+
+
 def _normalise(text: str) -> str:
     text = text.replace("\x00", "")
     text = re.sub(r"[​-‏﻿]", "", text)
-    text = text.replace("•", "•").replace("", "•").replace("●", "•")
+    text = _EXTENDED_BULLETS.sub("•", text)
     text = re.sub(r"[ \t]+", " ", text)
     text = re.sub(r"\n\s*\n\s*\n+", "\n\n", text)
     return text.strip()
+
+
+def _extract_pdf_page_text(page: object) -> str:
+    """Extract PDF page text preserving reading order for single- and two-column layouts."""
+    try:
+        raw_blocks = page.get_text("blocks")  # type: ignore[attr-defined]
+    except Exception:  # noqa: BLE001
+        return page.get_text("text", sort=True) or ""  # type: ignore[attr-defined]
+    blocks = [b for b in raw_blocks if len(b) >= 7 and b[6] == 0 and str(b[4] or "").strip()]
+    if not blocks:
+        return page.get_text("text", sort=True) or ""  # type: ignore[attr-defined]
+    width = float(getattr(getattr(page, "rect", None), "width", 600.0) or 600.0)
+    left = [b for b in blocks if b[2] <= width * 0.50]
+    right = [b for b in blocks if b[0] >= width * 0.45 and b not in left]
+    full = [b for b in blocks if b not in left and b not in right]
+    if len(left) >= 3 and len(right) >= 3 and max(b[2] for b in left) <= min(b[0] for b in right) + 12:
+        col_top = min(min(b[1] for b in left), min(b[1] for b in right))
+        top_full = sorted((b for b in full if b[1] < col_top), key=lambda b: (b[1], b[0]))
+        bot_full = sorted((b for b in full if b[1] >= col_top), key=lambda b: (b[1], b[0]))
+        ordered = top_full + sorted(left, key=lambda b: (b[1], b[0])) + sorted(right, key=lambda b: (b[1], b[0])) + bot_full
+        return "\n".join(str(b[4]).strip() for b in ordered)
+    ordered = sorted(blocks, key=lambda b: (round(b[1] / 4.0), b[0]))
+    return "\n".join(str(b[4]).strip() for b in ordered)
 
 
 def _parse_pdf(path: Path) -> tuple[str, int, list[str]]:
@@ -52,7 +78,7 @@ def _parse_pdf(path: Path) -> tuple[str, int, list[str]]:
         pages_text: list[str] = []
         image_pages = 0
         for page in doc:
-            txt = page.get_text("text", sort=True) or ""
+            txt = _extract_pdf_page_text(page)
             pages_text.append(txt)
             if len(txt.strip()) < 20 and page.get_images(full=False):
                 image_pages += 1
@@ -94,7 +120,27 @@ def _pdf_links(path: Path) -> list[str]:
     return out[:10]
 
 
-def _parse_docx(path: Path) -> tuple[str, int, list[str]]:
+def _docx_links(document: object) -> list[str]:
+    """Extract http(s) hyperlink targets from DOCX document & header relationships."""
+    out: list[str] = []
+    parts = [getattr(document, "part", None)]
+    for section in getattr(document, "sections", []) or []:
+        header = getattr(section, "header", None)
+        if header is not None:
+            parts.append(getattr(header, "part", None))
+    for part in parts:
+        rels = getattr(part, "rels", None)
+        if not rels:
+            continue
+        for rel in rels.values():
+            reltype = str(getattr(rel, "reltype", "") or "").lower()
+            target = str(getattr(rel, "target_ref", "") or getattr(rel, "_target", "") or "").strip()
+            if "hyperlink" in reltype and target.lower().startswith(("http://", "https://")) and target not in out:
+                out.append(target)
+    return out[:10]
+
+
+def _parse_docx(path: Path) -> tuple[str, int, list[str], list[str]]:
     try:
         import docx
     except ImportError as exc:  # pragma: no cover
@@ -125,7 +171,7 @@ def _parse_docx(path: Path) -> tuple[str, int, list[str]]:
     text = "\n".join(parts)
     if len(text.strip()) < MIN_TEXT_CHARS:
         raise CVError(f"'{path.name}' contains almost no text (text boxes/images are not supported).")
-    return text, 1, []
+    return text, 1, [], _docx_links(document)
 
 
 def _doc_converters() -> list[list[str]]:
@@ -207,7 +253,7 @@ def parse_cv(path: Path) -> ParsedCV:
     elif suffix == ".docx":
         if not data.startswith(b"PK"):
             raise CVError(f"'{path.name}' is not a valid DOCX file.")
-        text, pages, warnings = _parse_docx(path)
+        text, pages, warnings, links = _parse_docx(path)
     elif suffix == ".doc":
         if not data.startswith(b"\xd0\xcf\x11\xe0"):
             raise CVError(f"'{path.name}' is not a valid Word .doc file.")

@@ -9,12 +9,15 @@
 
 from __future__ import annotations
 
+import email.policy
 import re
 from dataclasses import dataclass
 from email.message import EmailMessage
 from email.utils import formataddr, formatdate, make_msgid
 from pathlib import Path
 from typing import Any, Protocol
+
+_UNRESOLVED_PLACEHOLDER = re.compile(r"\[[^\]]{2,40}\]|\{[^}]{2,40}\}")
 
 from src.applications.contacts import validate_address
 from src.applications.gmail_client import DeliveryUnknownError, GmailAuthError, GmailClient, GmailError
@@ -125,7 +128,7 @@ class DryRunTransport:
         self.outbox.mkdir(parents=True, exist_ok=True)
         stamp = local_now().strftime("%Y%m%d_%H%M%S_%f")
         path = self.outbox / f"{stamp}.eml"
-        path.write_bytes(msg.as_bytes())
+        path.write_bytes(msg.as_bytes(policy=email.policy.SMTP))
         return TransportResult(message_id=f"dry-run:{path.name}", transport=self.name)
 
 
@@ -187,14 +190,17 @@ class GmailTransport:
         self.client = client
 
     async def send(self, msg: EmailMessage) -> TransportResult:
-        return TransportResult(message_id=await self.client.send_raw(msg.as_bytes()), transport=self.name)
+        return TransportResult(
+            message_id=await self.client.send_raw(msg.as_bytes(policy=email.policy.SMTP)),
+            transport=self.name,
+        )
 
 
 # ------------------------------------------------------------------ service
 class EmailService:
     def __init__(self, tracker: ApplicationTracker, guard: SendingGuard, transport: MailTransport, *,
                  sender: str, sender_name: str = "", max_attachment_bytes: int = 10 * 1024 * 1024,
-                 own_email: str | None = None) -> None:
+                 own_email: str | None = None, reply_to: str | None = None) -> None:
         if not sender or "@" not in sender:
             raise JobIntelError("A sender address is required (GMAIL_SENDER_ADDRESS in .env).")
         if guard.transport_name != transport.name:
@@ -206,9 +212,15 @@ class EmailService:
         self.sender_name = sender_name
         self.max_attachment_bytes = max_attachment_bytes
         self.own_email = own_email
+        self.reply_to = reply_to if (reply_to and reply_to.strip().lower() != sender.strip().lower()) else None
 
     def preflight(self, rec: ApplicationRecord) -> None:
         """Checks that do not change any state. Raises SendRefused."""
+        if rec.channel == "web":
+            raise SendRefused(
+                f"Application {rec.id} is a Web/ATS application and cannot be sent by e-mail.",
+                code="wrong_channel",
+            )
         if rec.status != ApplicationStatus.APPROVED.value or rec.approval_status != "approved":
             raise SendRefused(f"Application {rec.id} is {rec.status}; only APPROVED applications can be sent.",
                               code="not_approved")
@@ -222,6 +234,12 @@ class EmailService:
         if rec.content_hash() != rec.approved_hash:
             raise SendRefused(f"The content of {rec.id} changed after approval; review it again.",
                               code="approval_mismatch")
+        subject = (rec.email_subject or "").strip()
+        body = (rec.email_body or "").strip()
+        if not subject or "\n" in subject or len(body) < 15:
+            raise SendRefused(f"Application {rec.id} has an empty subject or too-short body.", code="invalid_message")
+        if _UNRESOLVED_PLACEHOLDER.search(subject + " " + body):
+            raise SendRefused(f"Application {rec.id} still contains an unresolved placeholder.", code="invalid_message")
         ok, why = validate_address(rec.recipient_email or "", own_email=self.own_email)
         if not ok:
             raise SendRefused(f"Recipient of {rec.id} is invalid: {why}", code="invalid_recipient")
@@ -241,15 +259,25 @@ class EmailService:
         if rec is None:
             raise SendRefused(f"Unknown application {app_id}", code="unknown")
         self.preflight(rec)
-        decision = self.guard.check(rec.recipient_email)
+        # During TestRedirectTransport, pass recipient=None to guard check/record so real Gmail
+        # daily/hourly/interval/window limits stay enforced without polluting employer domain caps.
+        guard_recipient = None if isinstance(self.transport, TestRedirectTransport) else rec.recipient_email
+        decision = self.guard.check(guard_recipient)
         if not decision.allowed:
             raise SendRefused(decision.reason, code=decision.code, decision=decision)
+        effective_sender_name = (rec.sender_name or "").strip() or self.sender_name
         # Build the message before taking the lock: a failure here must not leave a stuck lock.
         try:
-            msg = build_message(sender=self.sender, sender_name=self.sender_name, recipient=rec.recipient_email or "",
-                                subject=rec.email_subject, body=rec.email_body,
-                                attachment=Path(rec.attachment_path or ""),
-                                attachment_filename=attachment_name(rec, self.sender_name))
+            msg = build_message(
+                sender=self.sender,
+                sender_name=effective_sender_name,
+                recipient=rec.recipient_email or "",
+                subject=rec.email_subject,
+                body=rec.email_body,
+                attachment=Path(rec.attachment_path or ""),
+                attachment_filename=attachment_name(rec, effective_sender_name),
+                reply_to=self.reply_to,
+            )
         except (OSError, ValueError) as exc:
             raise SendRefused(f"Could not build the e-mail for {rec.id}: {exc}", code="invalid_message") from exc
         if not self.tracker.claim_send_lock(rec.id):
@@ -265,7 +293,7 @@ class EmailService:
             self.guard.pause(f"{AUTH_PAUSE_PREFIX}: {str(exc)[:200]}")
             raise
         except DeliveryUnknownError as exc:
-            self.guard.record(rec.id, "failed", rec.recipient_email, error_kind=exc.kind, error=str(exc))
+            self.guard.record(rec.id, "failed", guard_recipient, error_kind=exc.kind, error=str(exc))
             self.tracker.mark_failed(rec.id, error=str(exc), error_kind=exc.kind, transport=self.transport.name,
                                      keep_lock=True)
             self.tracker.update_fields(rec.id, message_id_header=message_id)
@@ -274,18 +302,18 @@ class EmailService:
             kind = "invalid_recipient" if exc.kind == "invalid_request" and \
                 re.search(r"(?i)recipient|to header|invalid address", str(exc)) else exc.kind
             outcome = "blocked" if exc.pause_sending else "failed"
-            self.guard.record(rec.id, outcome, rec.recipient_email, error_kind=kind, error=str(exc))
+            self.guard.record(rec.id, outcome, guard_recipient, error_kind=kind, error=str(exc))
             if exc.pause_sending:
                 hours = self.guard.limits.quota_pause_hours if exc.kind in ("sending_limit", "quota") else None
                 self.guard.pause(f"Gmail {exc.kind} error: {str(exc)[:200]}", hours=hours)
             self.tracker.mark_failed(rec.id, error=str(exc), error_kind=kind, transport=self.transport.name)
             raise
         except Exception as exc:  # noqa: BLE001 - unexpected transport failure: treat as unknown delivery
-            self.guard.record(rec.id, "failed", rec.recipient_email, error_kind="unexpected", error=repr(exc))
+            self.guard.record(rec.id, "failed", guard_recipient, error_kind="unexpected", error=repr(exc))
             self.tracker.mark_failed(rec.id, error=f"Unexpected error: {exc!r}", error_kind="delivery_unknown",
                                      transport=self.transport.name, keep_lock=True)
             raise
-        self.guard.record(rec.id, "sent", rec.recipient_email)
+        self.guard.record(rec.id, "sent", guard_recipient)
         log_event(log, 20, "application.sent", id=rec.id, transport=result.transport)
         if getattr(self.transport, "rehearsal", False):
             # Dry run / test recipient are rehearsals: the record must stay sendable for real, and a

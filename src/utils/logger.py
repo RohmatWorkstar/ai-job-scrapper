@@ -38,6 +38,19 @@ def redact(text: str) -> str:
     return text
 
 
+def _redact_obj(obj: object) -> object:
+    """Recursively redact only string leaves so numeric/boolean JSON fields stay intact."""
+    if isinstance(obj, str):
+        return redact(obj)
+    if obj is None or isinstance(obj, (bool, int, float)):
+        return obj
+    if isinstance(obj, dict):
+        return {str(k): _redact_obj(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_redact_obj(v) for v in obj]
+    return redact(str(obj))
+
+
 class JsonFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
         payload = {
@@ -48,7 +61,7 @@ class JsonFormatter(logging.Formatter):
         }
         extra = getattr(record, "data", None)
         if isinstance(extra, dict):
-            payload["data"] = json.loads(redact(json.dumps(extra, default=str, ensure_ascii=False)))
+            payload["data"] = _redact_obj(extra)
         if record.exc_info:
             payload["exc"] = redact(self.formatException(record.exc_info))
         return json.dumps(payload, ensure_ascii=False)

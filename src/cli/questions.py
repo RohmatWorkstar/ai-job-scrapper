@@ -167,6 +167,32 @@ def parse_list(text: str) -> list[str]:
     return [p.strip() for p in re.split(r"[,;\n]+", text or "") if p.strip()]
 
 
+def parse_salary_input(raw: str) -> float | None:
+    """Parse user salary input supporting English (10,000,000) and Indonesian (10.000.000) separators."""
+    s = (raw or "").strip().replace(" ", "")
+    if not s:
+        return None
+    if re.fullmatch(r"\d{1,3}(?:\.\d{3})+", s):
+        return float(s.replace(".", ""))
+    if re.fullmatch(r"\d{1,3}(?:\.\d{3})+,\d{1,2}", s):
+        return float(s.replace(".", "").replace(",", "."))
+    if re.fullmatch(r"\d{1,3}(?:,\d{3})+(?:\.\d{1,2})?", s):
+        return float(s.replace(",", ""))
+    if re.fullmatch(r"\d+(?:[.,]\d+)?", s):
+        return float(s.replace(",", "."))
+    raise ValueError("Invalid salary number")
+
+
+def _validate_salary_input(text: str) -> bool | str:
+    if not (text or "").strip():
+        return True
+    try:
+        val = parse_salary_input(text)
+        return (val is not None and val >= 0) or "Enter a positive number or leave empty"
+    except ValueError:
+        return "Enter a number (e.g. 15000000 or 15.000.000) or leave empty"
+
+
 # ------------------------------------------------------------------ prompts
 
 class Cancelled(Exception):
@@ -235,9 +261,8 @@ def ask_questions(settings: Settings, defaults: dict[str, Any], profile: Candida
     # 6. Salary
     sal = _ans(questionary.text("6/10  Minimum salary (number, Enter = no minimum):",
                                 default=str(int(a["min_salary"])) if a.get("min_salary") else "",
-                                validate=lambda t: t.strip() == "" or t.replace(".", "", 1).replace(",", "").isdigit()
-                                or "Enter a number or leave empty").ask())
-    a["min_salary"] = float(sal.replace(",", "")) if sal.strip() else None
+                                validate=_validate_salary_input).ask())
+    a["min_salary"] = parse_salary_input(sal)
     if a["min_salary"]:
         a["salary_currency"] = _ans(questionary.select("      Preferred currency:", choices=CURRENCIES,
                                                        default=a.get("salary_currency") or "IDR").ask())
@@ -266,6 +291,8 @@ def ask_questions(settings: Settings, defaults: dict[str, Any], profile: Candida
                                       default=", ".join(a.get("extra_languages", []))).ask())
         a["extra_languages"] = parse_list(extra)
         a["languages"] = "both"
+    else:
+        a["extra_languages"] = []
 
     # 10. Additional preferences
     a["additional"] = _ans(questionary.text(

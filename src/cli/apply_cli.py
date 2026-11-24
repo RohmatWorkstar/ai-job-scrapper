@@ -6,9 +6,11 @@ import asyncio
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 import tempfile
+import webbrowser
 from pathlib import Path
 from typing import Any
 
@@ -68,7 +70,7 @@ def build_transport(settings: Settings, dry_run: bool) -> tuple[MailTransport, s
     if test and not dry_run:
         from src.applications.contacts import validate_address
 
-        ok, why = validate_address(test, own_email=sender)
+        ok, why = validate_address(test)
         if not ok:
             raise JobIntelError(f"APPLICATION_TEST_RECIPIENT '{test}' is not usable: {why}")
         transport = TestRedirectTransport(transport, test)
@@ -102,11 +104,14 @@ def build_service(settings: Settings, db: Database, *, dry_run: bool,
     transport, sender = build_transport(settings, dry_run)
     tracker = ApplicationTracker(db, recipient_cooldown_days=float(settings.get("applications.recipient_cooldown_days", 30)))
     guard = SendingGuard.from_settings(settings, tracker, transport.name)
-    own = own_email or os.environ.get("APPLICANT_EMAIL", "").strip() or os.environ.get("GMAIL_SENDER_ADDRESS", "").strip()
+    applicant_email = os.environ.get("APPLICANT_EMAIL", "").strip()
+    own = own_email or applicant_email or os.environ.get("GMAIL_SENDER_ADDRESS", "").strip()
+    reply_to = applicant_email or None
     return EmailService(tracker, guard, transport, sender=sender,
                         sender_name=os.environ.get("APPLICANT_NAME", "").strip() or identity_name,
                         max_attachment_bytes=int(float(settings.get("applications.sending.max_attachment_mb", 10)) * 1048576),
-                        own_email=own or None)
+                        own_email=own or None,
+                        reply_to=reply_to)
 
 
 def _confirm(question: str, default: bool = False) -> bool:
@@ -163,14 +168,18 @@ def _pdf_preview(path: str | None, lines: int = 14) -> str:
 
 
 def show_application(rec: ApplicationRecord, *, dry_run: bool, sender_name: str = "") -> None:
+    is_web = rec.channel == "web"
+    eff_sender = (rec.sender_name or "").strip() or sender_name
     t = Table.grid(padding=(0, 2))
     t.add_column(style="bold", no_wrap=True)
     t.add_column(overflow="fold")
-    t.add_row("Application", f"{rec.id}  ({rec.mode.upper()} mode, status {rec.status})")
+    chan_label = "WEB / ATS ASSIST" if is_web else "E-MAIL"
+    t.add_row("Application", f"{rec.id}  ({chan_label} · {rec.mode.upper()} mode, status {rec.status})")
     t.add_row("Company", rec.company_name or "[yellow]unknown[/]")
     t.add_row("Job title", rec.job_title or "")
-    t.add_row("Job URL", rec.job_url or "")
-    t.add_row("Recipient", rec.recipient_email or "[red]none[/]")
+    t.add_row("Apply URL" if is_web else "Job URL", rec.job_url or "")
+    if not is_web:
+        t.add_row("Recipient", rec.recipient_email or "[red]none[/]")
     t.add_row("Match score", f"{rec.match_score:g}" if rec.match_score is not None else "n/a")
     m = rec.match or {}
     match = m.get("match") or {}
@@ -205,19 +214,28 @@ def show_application(rec: ApplicationRecord, *, dry_run: bool, sender_name: str 
         t.add_row("CV changes", "\n".join(m["cv_changes"]))
     if m.get("rejected_rewrites"):
         t.add_row("Rejected AI rewrites", f"{len(m['rejected_rewrites'])} (failed the fact check; original wording kept)")
-    t.add_row("CV attached", rec.attachment_path or "[red]none[/]")
-    t.add_row("Attachment name", attachment_name(rec, sender_name))
-    t.add_row("E-mail method", str(m.get("email_method", "template")))
+    t.add_row("CV file" if is_web else "CV attached", rec.attachment_path or "[red]none[/]")
+    if not is_web:
+        t.add_row("Attachment name", attachment_name(rec, eff_sender))
+    t.add_row("Note method" if is_web else "E-mail method", str(m.get("email_method", "template")))
     if rec.notes:
         t.add_row("[yellow]Notes[/]", "\n".join(rec.notes))
     ui.console.print(Panel(t, title=f"Review {rec.id}", border_style="cyan"))
-    ui.console.print(Panel(f"[bold]Subject:[/] {rec.email_subject}\n\n{rec.email_body}", title="E-mail",
-                           border_style="green"))
+    if is_web:
+        ui.console.print(Panel(rec.email_body or "(no cover note)", title="Cover Note (paste into web/ATS form)",
+                               border_style="green"))
+    else:
+        ui.console.print(Panel(f"[bold]Subject:[/] {rec.email_subject}\n\n{rec.email_body}", title="E-mail",
+                               border_style="green"))
     if rec.mode == ApplicationMode.AI.value and rec.generated_cv_path:
         ui.console.print(Panel(_pdf_preview(rec.generated_cv_path), title="Generated CV preview (page 1)",
                                border_style="magenta"))
-    ui.console.print("[dim]" + ("DRY RUN: approving writes an .eml file, nothing is sent." if dry_run else
-                                "LIVE: approving and sending e-mails this employer from your Gmail account.") + "[/]")
+    if is_web:
+        ui.console.print("[dim]WEB/ATS ASSIST: open the link, upload the CV PDF, paste the cover note, then choose "
+                         "'Mark as Applied (APPLIED_WEB)'.[/]")
+    else:
+        ui.console.print("[dim]" + ("DRY RUN: approving writes an .eml file, nothing is sent." if dry_run else
+                                    "LIVE: approving and sending e-mails this employer from your Gmail account.") + "[/]")
 
 
 def show_summary(summary: PrepareSummary) -> None:
@@ -226,7 +244,12 @@ def show_summary(summary: PrepareSummary) -> None:
     t.add_column(style="bold")
     t.add_column(justify="right")
     t.add_row("Jobs considered", str(summary.considered))
-    t.add_row("Without an application e-mail (apply on the website)", str(summary.no_email))
+    if summary.no_email:
+        t.add_row("Without an application e-mail (use --apply web)", str(summary.no_email))
+    if summary.no_url:
+        t.add_row("Without an application URL", str(summary.no_url))
+    if summary.previously_closed:
+        t.add_row("Previously rejected/skipped (untouched)", str(summary.previously_closed))
     t.add_row("Invalid / unusable e-mail (SKIPPED)", str(len(summary.invalid_email)))
     t.add_row("Not eligible (REJECTED)", str(len(summary.rejected)))
     t.add_row("Already applied / in queue (duplicate)", str(len(summary.duplicates)))
@@ -255,10 +278,11 @@ async def review(records: list[ApplicationRecord], manager: ApplicationManager, 
         return
     manual = str(manager.settings.get("applications.sending.mode", "manual")) == "manual"
     can_send_now = manual and scheduler is not None
-    if scheduler is None:
+    if scheduler is None and any(r.channel == "email" for r in pending):
         ui.warn("Sending is not set up yet (see python main.py --setup-check). You can still review and approve; "
                 "approved applications wait in the queue for: python main.py --send-queue")
     sender_name = scheduler.service.sender_name if scheduler is not None else os.environ.get("APPLICANT_NAME", "")
+    test_addr = test_recipient(manager.settings)
     for idx, rec in enumerate(pending, 1):
         while True:
             rec = manager.tracker.get(rec.id) or rec
@@ -266,23 +290,54 @@ async def review(records: list[ApplicationRecord], manager: ApplicationManager, 
                 break
             ui.section(f"APPLICATION {idx} OF {len(pending)}")
             show_application(rec, dry_run=dry_run, sender_name=sender_name)
-            choices = (["Approve and send now"] if can_send_now else []) + \
-                ["Approve (queue for --send-queue)", "Edit e-mail"]
-            if rec.mode == ApplicationMode.AI.value:
-                choices.append("Regenerate CV")
-            if rec.attachment_path:
-                choices.append("Open CV PDF")
-            choices += [DECIDE_LATER, "Reject (not suitable)", "Skip (do not apply)", "Stop reviewing"]
+            if rec.channel == "web":
+                choices = ["Open Application URL in browser"]
+                if rec.attachment_path:
+                    choices += ["Open CV PDF", "Open CV folder"]
+                choices.append("Edit cover note")
+                if rec.mode == ApplicationMode.AI.value:
+                    choices.append("Regenerate CV")
+                choices += [
+                    "Mark as Applied (APPLIED_WEB)",
+                    DECIDE_LATER,
+                    "Reject (not suitable)",
+                    "Skip (do not apply)",
+                    "Stop reviewing",
+                ]
+            else:
+                choices = (["Approve and send now"] if can_send_now else []) + \
+                    ["Approve (queue for --send-queue)", "Edit e-mail"]
+                if rec.mode == ApplicationMode.AI.value:
+                    choices.append("Regenerate CV")
+                if rec.attachment_path:
+                    choices.append("Open CV PDF")
+                choices += [DECIDE_LATER, "Reject (not suitable)", "Skip (do not apply)", "Stop reviewing"]
             action = await questionary.select("Action:", choices=choices, default=choices[0]).ask_async()
             if action is None or action == "Stop reviewing":
                 return
             if action == DECIDE_LATER:
                 ui.info("Kept as PENDING_APPROVAL. Review it later with: python main.py --review")
                 break
+            if action == "Open Application URL in browser":
+                open_url(rec.job_url)
+                continue
+            if action == "Open CV folder":
+                open_folder(rec.attachment_path)
+                continue
+            if action == "Mark as Applied (APPLIED_WEB)":
+                manager.tracker.mark_applied_web(rec.id, note="marked applied in CLI review")
+                ui.ok("Marked as APPLIED_WEB.")
+                break
             if action.startswith("Approve"):
-                if not dry_run and not await _aconfirm(f"Send this application to {rec.recipient_email} from your "
-                                                       "Gmail account?", default=False):
-                    continue
+                if not dry_run:
+                    test_note = f" [TEST redirect -> {test_addr}]" if test_addr else ""
+                    prompt = (
+                        f"Send this application to {rec.recipient_email} from your Gmail account{test_note}?"
+                        if action == "Approve and send now"
+                        else f"Queue this application for --send-queue (to {rec.recipient_email}{test_note})?"
+                    )
+                    if not await _aconfirm(prompt, default=False):
+                        continue
                 rec = manager.tracker.approve(rec.id, approved_by="user (CLI review)")
                 ui.ok("Approved.")
                 if action == "Approve and send now" and scheduler is not None:
@@ -294,11 +349,14 @@ async def review(records: list[ApplicationRecord], manager: ApplicationManager, 
             if action == "Open CV PDF":
                 open_file(rec.attachment_path)
                 continue
-            if action == "Edit e-mail":
+            if action in ("Edit e-mail", "Edit cover note"):
                 edited = await edit_email_text(rec.email_subject, rec.email_body)
                 if edited is None:
                     continue
                 subject, body = edited
+                if subject == rec.email_subject and body == rec.email_body:
+                    ui.info("No changes made.")
+                    continue
                 problems, warnings = check_edited_email(subject, body, rec)
                 if problems:
                     ui.error("Not saved: " + "; ".join(problems))
@@ -306,7 +364,7 @@ async def review(records: list[ApplicationRecord], manager: ApplicationManager, 
                 for w in warnings:
                     ui.warn(w)
                 manager.edit_email(rec.id, subject, body)
-                ui.ok("E-mail updated. Review it again before approving.")
+                ui.ok("Updated. Review it again before continuing.")
                 continue
             if action == "Regenerate CV":
                 try:
@@ -316,18 +374,18 @@ async def review(records: list[ApplicationRecord], manager: ApplicationManager, 
                     ui.error(str(exc))
                 continue
             if action.startswith("Reject"):
-                manager.tracker.reject(rec.id, "rejected by user in review")
+                manager.tracker.reject(rec.id, "rejected by user in review", closed_by="user")
                 ui.info("Rejected (this job will not be offered again).")
                 break
             if action.startswith("Skip"):
-                manager.tracker.skip(rec.id, "skipped by user in review")
+                manager.tracker.skip(rec.id, "skipped by user in review", closed_by="user")
                 ui.info("Skipped (this job will not be offered again).")
                 break
 
 
 DECIDE_LATER = "Decide later (keep pending)"
 _PLACEHOLDER = re.compile(r"\[[^\]]{2,40}\]|\{[^}]{2,40}\}|<[^>]{2,30}>|lorem ipsum", re.I)
-_EDIT_MARK = "----- Write the e-mail body below this line. Save and close the editor when done. -----"
+_EDIT_MARK = "----- Write the text below this line. Save and close the editor when done. -----"
 
 
 def open_file(path: str | None) -> None:
@@ -345,16 +403,42 @@ def open_file(path: str | None) -> None:
         ui.error(f"Cannot open {path}: {exc}")
 
 
+def open_folder(path: str | None) -> None:
+    """Open the containing folder of a file (for quick ATS upload drag-and-drop)."""
+    if not path or not Path(path).exists():
+        ui.error(f"File not found: {path}")
+        return
+    folder = str(Path(path).resolve().parent)
+    try:
+        if sys.platform == "win32":
+            os.startfile(folder)  # type: ignore[attr-defined]  # noqa: S606
+        else:
+            subprocess.Popen(["open" if sys.platform == "darwin" else "xdg-open", folder])  # noqa: S603
+        ui.info(f"Opened folder {folder}")
+    except OSError as exc:
+        ui.error(f"Cannot open folder {folder}: {exc}")
+
+
+def open_url(url: str | None) -> None:
+    """Open an application URL in the user's default browser."""
+    if not url or not url.startswith(("http://", "https://")):
+        ui.error(f"Invalid application URL: {url}")
+        return
+    webbrowser.open(url)
+    ui.info(f"Opened {url}")
+
+
 async def edit_email_text(subject: str, body: str) -> tuple[str, str] | None:
     """Edit subject+body in Notepad (Windows) / $EDITOR, or in the terminal as a fallback."""
     import questionary
 
-    editor = ["notepad.exe"] if sys.platform == "win32" else ([os.environ["EDITOR"]] if os.environ.get("EDITOR") else [])
+    raw_editor = os.environ.get("EDITOR", "").strip()
+    editor = ["notepad.exe"] if sys.platform == "win32" else (shlex.split(raw_editor) if raw_editor else [])
     if editor:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "application_email.txt"
             path.write_text(f"Subject: {subject}\n{_EDIT_MARK}\n{body}\n", encoding="utf-8")
-            ui.info("The e-mail opened in your editor. Save and close it to continue.")
+            ui.info("Opened in your editor. Save and close it to continue.")
             try:
                 await asyncio.to_thread(subprocess.run, [*editor, str(path)], check=False)
                 text = path.read_text(encoding="utf-8-sig")
@@ -435,6 +519,11 @@ class ApplyCommands:
     async def _profile(self, db: Database, cv: ParsedCV, use_ai: bool) -> CandidateProfile:
         stored = Repository(db).latest_profile_for(cv.sha256)
         if stored is not None:
+            if use_ai and stored.analysis_method == "deterministic":
+                ui.info(f"Upgrading deterministic profile for {cv.filename} with Gemini...")
+                profile = await self.app.build_profile(cv, True)
+                Repository(db).save_profile(profile)
+                return profile
             ui.ok(f"Using the stored candidate profile for {cv.filename} ({stored.analysis_method}).")
             return stored
         if use_ai:
@@ -443,6 +532,20 @@ class ApplyCommands:
             profile = CVAnalyzer(self.settings).analyze(cv)
         Repository(db).save_profile(profile)
         return profile
+
+    def _session_config(self, db: Database, session_id: str | None) -> tuple[Any, Any]:
+        from src.core.models import SearchConfig
+        from src.discovery.query_generator import parse_preferences
+
+        if session_id and not session_id.startswith("recent-"):
+            sess = Repository(db).get_session(session_id)
+            if sess and sess.get("config_json"):
+                try:
+                    cfg = SearchConfig.from_dict(json.loads(sess["config_json"]))
+                    return cfg, parse_preferences(cfg.additional_preferences)
+                except (ValueError, TypeError):
+                    pass
+        return None, None
 
     def _scheduler(self, db: Database, dry_run: bool, identity_name: str = "",
                    own_email: str | None = None) -> SendingScheduler | None:
@@ -456,16 +559,31 @@ class ApplyCommands:
         return SendingScheduler(service, service.tracker, on_event=ui.info,
                                 max_wait_seconds=float(self.settings.get("applications.sending.max_wait_seconds", 900)))
 
-    async def apply(self, mode: str) -> int:
+    @staticmethod
+    def resolve_mode_channel(mode_arg: str, channel_arg: str | None) -> tuple[ApplicationMode, str]:
+        """Resolve CLI --apply + --channel into orthogonal (ApplicationMode, channel)."""
+        if mode_arg == "web":
+            if channel_arg == "email":
+                raise JobIntelError("--apply web cannot be combined with --channel email.")
+            return ApplicationMode.AI, "web"
+        return ApplicationMode(mode_arg), (channel_arg or "email")
+
+    async def apply(self, mode_arg: str, *, channel_arg: str | None = None,
+                    all_recent_days: int | None = None, limit_override: int | None = None,
+                    jobs_override: list[Any] | None = None) -> int:
         validate_applications_settings(self.settings)
-        dry_run = is_dry_run(self.settings, self.args.dry_run)
-        ui.section(f"APPLICATION AUTOMATION - {mode.upper()} MODE")
-        show_limits_banner(self.settings, dry_run)
+        mode, channel = self.resolve_mode_channel(
+            mode_arg, channel_arg if channel_arg is not None else getattr(self.args, "channel", None)
+        )
+        dry_run = is_dry_run(self.settings, getattr(self.args, "dry_run", False))
+        ui.section(f"APPLICATION AUTOMATION - {mode.value.upper()} MODE ({channel.upper()} CHANNEL)")
+        if channel in ("email", "all"):
+            show_limits_banner(self.settings, dry_run)
         cv = await asyncio.to_thread(self.app.choose_cv)
         if cv is None:
             return 1
-        use_ai = mode == "ai" and await asyncio.to_thread(self.app.ai_consent)
-        if mode == "ai" and not use_ai:
+        use_ai = mode == ApplicationMode.AI and await asyncio.to_thread(self.app.ai_consent)
+        if mode == ApplicationMode.AI and not use_ai:
             ui.warn("AI is not available or not consented: analysis is deterministic and the CV is only reordered.")
         allow_dup, authorization = await self._duplicate_authorization()
         db = self._db()
@@ -476,35 +594,58 @@ class ApplyCommands:
                 ai = AIManager.from_settings(self.settings, http)
                 ai.max_calls = int(self.settings.get("applications.ai.max_calls_per_run", 60))
             profile = await self._profile(db, cv, use_ai)
-            manager = ApplicationManager(self.settings, db, ai=ai)
-            cv_path = self.settings.cv_directory / cv.filename
-            await manager.set_candidate(cv, profile, cv_path, use_ai=use_ai)
-            try:
-                session_id, jobs = manager.load_jobs(self.args.session)
-            except ValueError as exc:
-                ui.error(str(exc))
-                return 1
+            recent_days = all_recent_days if all_recent_days is not None else getattr(self.args, "all_recent", None)
+            tmp_mgr = ApplicationManager(self.settings, db, ai=ai)
+            if jobs_override is not None:
+                session_id, jobs = getattr(self.args, "session", None), list(jobs_override)
+            else:
+                try:
+                    session_id, jobs = tmp_mgr.load_jobs(getattr(self.args, "session", None), all_recent_days=recent_days)
+                except ValueError as exc:
+                    ui.error(str(exc))
+                    return 1
             if not jobs:
                 ui.error("No scraped jobs found. Run a search first: python main.py")
                 return 1
-            ui.ok(f"Loaded {len(jobs)} job(s) from session {session_id}; "
-                  f"{sum(1 for j in jobs if j.application_emails)} have an application e-mail.")
-            limit = self.args.limit
-            if mode == "basic":
-                summary = manager.prepare_basic(jobs, self._basic_pdf(cv), session_id=session_id, limit=limit,
-                                                allow_duplicate=allow_dup, authorization=authorization)
-            else:
-                summary = await self._prepare_ai(manager, jobs, session_id, limit, allow_dup, authorization)
+            sess_cfg, sess_prefs = self._session_config(db, session_id)
+            manager = ApplicationManager(self.settings, db, ai=ai, config=sess_cfg, preferences=sess_prefs)
+            cv_path = self.settings.cv_directory / cv.filename
+            await manager.set_candidate(cv, profile, cv_path, use_ai=use_ai)
+            with_email = sum(1 for j in jobs if j.application_emails)
+            with_url = sum(1 for j in jobs if (j.application_url or j.source_url))
+            ui.ok(f"Loaded {len(jobs)} job(s) ({session_id or 'selected'}): "
+                  f"{with_email} e-mail, {with_url} web/ATS.")
+            limit = limit_override if limit_override is not None else getattr(self.args, "limit", None)
+            cv_pdf = self._basic_pdf(cv) if mode == ApplicationMode.BASIC else None
+            summary = await manager.prepare_batch(
+                jobs,
+                mode=mode,
+                channel=channel,
+                cv_pdf=cv_pdf,
+                session_id=session_id,
+                limit=limit,
+                allow_duplicate=allow_dup,
+                authorization=authorization,
+                on_progress=ui.info,
+            )
             show_summary(summary)
             if ai is not None:
                 ui.info(f"AI usage: {ai.status_line()}")
-            self.app.prefs.save(self.app.saved)
-            scheduler = self._scheduler(db, dry_run, manager.doc.identity.name, manager.doc.identity.email)
+            if self.app.prefs is not None:
+                self.app.prefs.save(self.app.saved)
+            scheduler = (
+                self._scheduler(db, dry_run, manager.doc.identity.name, manager.doc.identity.email)
+                if channel in ("email", "all")
+                else None
+            )
             # This run's applications first, then older ones still waiting for a decision.
             new_ids = {r.id for r in summary.prepared}
-            older = [r for r in manager.tracker.list([S.PENDING_APPROVAL]) if r.id not in new_ids]
+            older = [
+                r for r in manager.tracker.list([S.PENDING_APPROVAL], channel=None if channel == "all" else channel)
+                if r.id not in new_ids
+            ]
             if older:
-                ui.info(f"{len(older)} older application(s) are also waiting for approval; they follow this run's.")
+                ui.info(f"{len(older)} older application(s) are also waiting for review; they follow this run's.")
             await review(summary.prepared + older, manager, scheduler, dry_run=dry_run,
                          interactive=self.app.interactive)
             if scheduler is not None:
@@ -515,44 +656,6 @@ class ApplyCommands:
                 await http.aclose()
             db.close()
 
-    async def _prepare_ai(self, manager: ApplicationManager, jobs: list[Any], session_id: str | None,
-                          limit: int | None, allow_dup: bool, authorization: str | None) -> PrepareSummary:
-        from src.applications.eligibility import EligibilityFilter
-
-        summary = PrepareSummary()
-        # Cheap pre-filter before any AI call: exclusions only, the AI match score decides relevance.
-        pre = EligibilityFilter(self.settings, {"min_relevance_score": 0, "allowed_relevance_categories": []},
-                                candidate_seniority=manager.profile.seniority_estimate if manager.profile else None)
-        max_jobs = limit or int(self.settings.get("applications.ai.max_jobs_per_run", 10))
-        for job in jobs:
-            if len(summary.prepared) >= max_jobs:
-                break
-            summary.considered += 1
-            if not job.application_emails:
-                summary.no_email += 1
-                continue
-            res = pre.evaluate(job)
-            if not res.eligible:
-                summary.rejected.append((job, res.reasons))
-                continue
-            ui.info(f"Analysing: {job.job_title} @ {job.company_name or '?'}")
-            try:
-                rec = await manager.prepare_ai(job, session_id=session_id, allow_duplicate=allow_dup,
-                                               authorization=authorization)
-            except DuplicateApplicationError as exc:
-                summary.duplicates.append((job, exc.existing))
-                continue
-            if rec is None:
-                summary.invalid_email.append((job, ["no usable application e-mail (or already rejected/skipped)"]))
-            elif rec.status == S.PENDING_APPROVAL.value:
-                summary.prepared.append(rec)
-            elif rec.status == S.REJECTED.value:
-                summary.rejected.append((job, [f"AI match score {rec.match_score:g} below the threshold"]))
-            else:
-                summary.failed.append((job, rec.error or rec.status))
-                ui.warn(f"Preparation failed: {rec.error}")
-        return summary
-
     async def _maybe_automatic(self, manager: ApplicationManager, scheduler: SendingScheduler,
                                records: list[ApplicationRecord]) -> None:
         if not getattr(self.args, "auto", False):
@@ -561,30 +664,66 @@ class ApplyCommands:
         if not ok:
             ui.warn(f"Automatic sending not enabled: {why}.")
             return
-        approved = manager.auto_approve(records)
+        email_records = [r for r in records if r.channel == "email"]
+        if not email_records:
+            return
+        approved = manager.auto_approve(email_records)
         ui.info(f"Automatic mode: {len(approved)} application(s) approved by policy.")
         report = await scheduler.process_queue()
         self._show_queue_report(report)
 
     # ----------------------------------------------------------- utilities
-    async def review_pending(self) -> int:
-        dry_run = is_dry_run(self.settings, self.args.dry_run)
+    async def review_pending(self, *, channel: str | None = None) -> int:
+        validate_applications_settings(self.settings)
+        dry_run = is_dry_run(self.settings, getattr(self.args, "dry_run", False))
         db = self._db()
+        http = None
         try:
-            manager = ApplicationManager(self.settings, db)
-            pending = manager.tracker.list([S.PENDING_APPROVAL])
+            tracker = ApplicationTracker(db)
+            pending = tracker.list([S.PENDING_APPROVAL], channel=channel)
             needs_cv = any(r.mode == ApplicationMode.AI.value for r in pending)
+            ai = None
+            use_ai = False
+            cv = None
+            cv_path: Path | None = None
             if needs_cv:
-                cv = await asyncio.to_thread(self.app.choose_cv)
+                # Prefer the original CV recorded on the pending application so Regenerate CV uses the right source.
+                for r in pending:
+                    if r.original_cv_path and Path(r.original_cv_path).is_file():
+                        from src.cv.parser import parse_cv
+
+                        try:
+                            cv = parse_cv(Path(r.original_cv_path))
+                            cv_path = Path(r.original_cv_path)
+                            break
+                        except Exception:  # noqa: BLE001
+                            pass
+                if cv is None:
+                    cv = await asyncio.to_thread(self.app.choose_cv)
+                    if cv is not None:
+                        cv_path = self.settings.cv_directory / cv.filename
                 if cv is not None:
-                    profile = await self._profile(db, cv, False)
-                    await manager.set_candidate(cv, profile, self.settings.cv_directory / cv.filename, use_ai=False)
-            show_limits_banner(self.settings, dry_run)
-            scheduler = self._scheduler(db, dry_run, manager.doc.identity.name if manager.doc else "",
-                                        manager.doc.identity.email if manager.doc else None)
+                    use_ai = await asyncio.to_thread(self.app.ai_consent)
+                    if use_ai:
+                        http = build_http(self.settings,
+                                          timeout=float(self.settings.get("ai.request_timeout_seconds", 90)))
+                        ai = AIManager.from_settings(self.settings, http)
+                        ai.max_calls = int(self.settings.get("applications.ai.max_calls_per_run", 60))
+            manager = ApplicationManager(self.settings, db, ai=ai)
+            if cv is not None and cv_path is not None:
+                profile = await self._profile(db, cv, use_ai)
+                await manager.set_candidate(cv, profile, cv_path, use_ai=use_ai)
+            if any(r.channel == "email" for r in pending):
+                show_limits_banner(self.settings, dry_run)
+                scheduler = self._scheduler(db, dry_run, manager.doc.identity.name if manager.doc else "",
+                                            manager.doc.identity.email if manager.doc else None)
+            else:
+                scheduler = None
             await review(pending, manager, scheduler, dry_run=dry_run, interactive=self.app.interactive)
             return 0
         finally:
+            if http is not None:
+                await http.aclose()
             db.close()
 
     def setup_check(self) -> int:
@@ -705,26 +844,60 @@ class ApplyCommands:
         finally:
             db.close()
 
-    def list_applications(self) -> int:
+    def list_applications(self, status_filter: str | None = None) -> int:
         db = self._db()
         try:
-            recs = ApplicationTracker(db).list(limit=100)
-            counts = ApplicationTracker(db).counts()
+            tracker = ApplicationTracker(db)
+            st_arg = status_filter if status_filter is not None else getattr(self.args, "status", None)
+            statuses = [st_arg.upper()] if st_arg else None
+            recs = tracker.list(statuses=statuses, limit=100)
+            counts = tracker.counts()
         finally:
             db.close()
-        t = Table(title="Application history (latest 100)")
-        for col in ("ID", "Created", "Mode", "Status", "Score", "Company", "Job title", "Recipient", "Sent", "Error"):
+        title = f"Application history ({st_arg.upper()})" if st_arg else "Application history (latest 100)"
+        t = Table(title=title)
+        for col in ("ID", "Created", "Channel", "Mode", "Status", "Score", "Company", "Job title",
+                    "Recipient / URL", "Sent / Applied", "Error"):
             t.add_column(col, overflow="fold")
         for r in recs:
             err = (r.error_kind or "") + (f": {r.error[:60]}" if r.error else "")
             if r.send_lock:
                 err = "LOCKED - delivery unknown; check Gmail Sent, then --requeue " + r.id + (f" ({err})" if err else "")
-            t.add_row(r.id, (r.created_at or "")[:16], r.mode, r.status, f"{r.match_score:g}" if r.match_score is not None else "",
-                      r.company_name or "", r.job_title or "", r.recipient_email or "", (r.sent_at or "")[:16], err)
+            target = r.recipient_email or (r.job_url or "")[:45]
+            t.add_row(r.id, (r.created_at or "")[:16], r.channel, r.mode, r.status,
+                      f"{r.match_score:g}" if r.match_score is not None else "",
+                      r.company_name or "", r.job_title or "", target, (r.sent_at or "")[:16], err)
         ui.console.print(t)
         if counts:
+            funnel = [
+                f"Pending {counts.get('PENDING_APPROVAL', 0)}",
+                f"Queued {counts.get('APPROVED', 0)}",
+                f"Sent(email) {counts.get('SENT', 0)}",
+                f"Applied(web) {counts.get('APPLIED_WEB', 0)}",
+                f"Interview {counts.get('INTERVIEW', 0)}",
+                f"Offer {counts.get('OFFER', 0)}",
+            ]
+            ui.info("Pipeline: " + " · ".join(funnel))
             ui.info("Totals: " + ", ".join(f"{k} {v}" for k, v in sorted(counts.items())))
         return 0
+
+    def update_status(self, app_id: str, new_status: str, note: str = "") -> int:
+        valid = {"applied_web", "interview", "offer", "employer_rejected", "withdrawn"}
+        norm = (new_status or "").strip().lower()
+        if norm not in valid:
+            ui.error(f"Unsupported status '{new_status}'. Choose one of: {', '.join(sorted(valid))}")
+            return 1
+        db = self._db()
+        try:
+            tracker = ApplicationTracker(db)
+            rec = tracker.update_pipeline_status(app_id, norm.upper(), note=note)
+            ui.ok(f"Application {rec.id} ({rec.job_title} @ {rec.company_name or '?'}) updated to {rec.status}.")
+            return 0
+        except (InvalidTransitionError, ValueError) as exc:
+            ui.error(str(exc))
+            return 1
+        finally:
+            db.close()
 
     def requeue(self, app_id: str) -> int:
         db = self._db()
@@ -763,6 +936,9 @@ def run_apply_command(app: Any) -> int | None:
         return cmd.resume_sending()
     if a.sending_status:
         return cmd.sending_status()
+    if getattr(a, "update_status", None):
+        app_id, st = a.update_status
+        return cmd.update_status(app_id, st, note=getattr(a, "note", "") or "")
     if a.applications:
         return cmd.list_applications()
     if a.requeue:
@@ -770,7 +946,7 @@ def run_apply_command(app: Any) -> int | None:
     if a.apply:
         return asyncio.run(cmd.apply(a.apply))
     if a.review:
-        return asyncio.run(cmd.review_pending())
+        return asyncio.run(cmd.review_pending(channel=getattr(a, "channel", None) if getattr(a, "channel", None) in ("email", "web") else None))
     if a.send_queue:
         return asyncio.run(cmd.send_queue())
     return None

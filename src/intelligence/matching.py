@@ -214,6 +214,30 @@ class Matcher:
         r.arrangement_assessment = "Arrangement and location not stated"
         return 0.5
 
+    @staticmethod
+    def _annualize_salary(amount: float, period: str | None, currency: str | None) -> float:
+        p = (period or "").strip().lower()
+        if p in {"hour", "hr"}:
+            return amount * 2080.0
+        if p == "day":
+            return amount * 260.0
+        if p == "week":
+            return amount * 52.0
+        if p in {"month", "mo"}:
+            return amount * 12.0
+        if p in {"year", "yr", "annual", "annum"}:
+            return amount
+        cur = (currency or "").upper()
+        if cur == "IDR":
+            return amount * 12.0 if amount < 100_000_000 else amount
+        if cur in {"USD", "EUR", "GBP", "SGD", "AUD", "CAD", "CHF", "NZD", "MYR", "AED", "HKD"}:
+            if amount < 200:
+                return amount * 2080.0
+            if amount < 20_000:
+                return amount * 12.0
+            return amount
+        return amount
+
     def salary(self, job: JobOpportunity, r: MatchResult) -> float:
         if job.salary_min is None and not job.salary_text:
             r.salary_assessment = "Salary not disclosed"
@@ -230,8 +254,11 @@ class Matcher:
             r.salary_assessment = f"Salary {shown.strip()} is in a different currency (not converted)"
             r.needs_verification.append("Salary comparison across currencies")
             return 0.6
+        cur = job.salary_currency or self.config.salary_currency
         top = job.salary_max or job.salary_min
-        if top >= self.config.min_salary:
+        top_annual = self._annualize_salary(top, job.salary_period, cur)
+        min_annual = self._annualize_salary(self.config.min_salary, None, self.config.salary_currency or cur)
+        if top_annual >= min_annual:
             r.salary_assessment = f"Salary {shown.strip()} meets the minimum"
             return 1.0
         r.salary_assessment = f"Salary {shown.strip()} is below the minimum ({self.config.min_salary:,.0f})"

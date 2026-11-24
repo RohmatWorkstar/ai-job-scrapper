@@ -27,7 +27,10 @@ def validate_url_syntax(url: str) -> str:
     url = url.strip()
     if len(url) > 2048:
         raise UnsafeURLError("URL too long")
-    parts = urlsplit(url)
+    try:
+        parts = urlsplit(url)
+    except ValueError as exc:
+        raise UnsafeURLError("Invalid URL syntax") from exc
     if parts.scheme.lower() not in ALLOWED_SCHEMES:
         raise UnsafeURLError(f"Scheme not allowed: {parts.scheme or '(none)'}")
     if not parts.hostname:
@@ -136,10 +139,36 @@ def domain_matches(url_or_host: str, domains: Iterable[str]) -> bool:
     return False
 
 
+_MOJIBAKE_MAP = (
+    ("â€™", "’"),
+    ("â€˜", "‘"),
+    ("â€œ", "“"),
+    ("â€\x9d", "”"),
+    ("â€\x9c", "“"),
+    ("â€“", "–"),
+    ("â€”", "—"),
+    ("â€¢", "•"),
+    ("â€¦", "…"),
+    ("Â\xa0", " "),
+    ("\xa0", " "),
+)
+
+
+def repair_mojibake(text: str) -> str:
+    """Repair common UTF-8-decoded-as-Latin-1 punctuation artifacts."""
+    if not text or ("â€" not in text and "Â\xa0" not in text and "\xa0" not in text):
+        return text
+    for bad, good in _MOJIBAKE_MAP:
+        if bad in text:
+            text = text.replace(bad, good)
+    return text
+
+
 def clean_text(text: str | None, limit: int | None = None) -> str:
     if not text:
         return ""
-    t = re.sub(r"[​-‏  ﻿]", "", text)
+    t = repair_mojibake(text)
+    t = re.sub(r"[​-‏  ﻿]", "", t)
     t = re.sub(r"[ \t\r\f\v]+", " ", t)
     t = re.sub(r"\n\s*\n\s*\n+", "\n\n", t).strip()
     if limit and len(t) > limit:

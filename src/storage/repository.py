@@ -152,6 +152,19 @@ class Repository:
         ).fetchall()
         return [JobOpportunity.from_dict(json.loads(r["data_json"])) for r in rows]
 
+    def recent_opportunities(self, days: int = 14, limit: int = 500) -> list[JobOpportunity]:
+        """Deduplicated opportunities discovered within the last ``days`` days across all sessions."""
+        from datetime import timedelta
+
+        since = iso(utc_now() - timedelta(days=max(1, int(days)))) or ""
+        rows = self.conn.execute(
+            "SELECT data_json FROM opportunities WHERE last_seen_at >= ? ORDER BY last_seen_at DESC LIMIT ?",
+            (since, limit),
+        ).fetchall()
+        jobs = [JobOpportunity.from_dict(json.loads(r["data_json"])) for r in rows]
+        jobs.sort(key=lambda j: -(j.relevance_score or 0))
+        return jobs
+
     def verification_history(self, job_key: str) -> list[dict[str, Any]]:
         rows = self.conn.execute("SELECT * FROM verification_history WHERE job_key=? ORDER BY id", (job_key,)).fetchall()
         return [dict(r) for r in rows]

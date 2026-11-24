@@ -95,7 +95,7 @@ def enrich_with_page(d: RawDiscovery, page: PageExtraction) -> None:
             d.content_kind = ContentKind.JOB_POSTING
     else:
         if page.text and len(page.text) > len(d.text):
-            d.text = page.text[:8000]
+            d.text = page.text[:40000]
         if page.published_hint and not d.published_at_evidence.startswith("schema"):
             d.published_at = page.published_hint
             d.published_at_evidence = f"page metadata ({page.published_evidence})"
@@ -155,6 +155,12 @@ class JobNormalizer:
             add("salary", sal_text or f"{cur} {sal_min}-{sal_max}", sal_text or f"{sal_min}-{sal_max} {cur}")
 
         req, pref = self._skills(text)
+        for s in d.raw.get("ai_required_skills") or []:
+            if not isinstance(s, str):
+                continue
+            canon = self.skills.canonical(s) or s.strip()
+            if canon and canon not in req:
+                req.append(canon)
         published = d.published_at
         post_created = d.post_created_at
         warnings: list[str] = []
@@ -245,7 +251,8 @@ def _supported(value: str | None, source_text: str) -> bool:
     return len(v) >= 2 and v in re.sub(r"\s+", " ", source_text.lower())
 
 
-async def ai_extract(discoveries: list[RawDiscovery], ai: AIManager, batch_size: int = 8, max_items: int = 80) -> int:
+async def ai_extract(discoveries: list[RawDiscovery], ai: AIManager, batch_size: int = 8, max_items: int = 80,
+                     detector: SkillDetector | None = None) -> int:
     """Use the AI provider to interpret unstructured discoveries. Every returned value must
     literally appear in the source text; unsupported values are discarded. Returns #items updated."""
     if not ai.available:
@@ -287,6 +294,31 @@ async def ai_extract(discoveries: list[RawDiscovery], ai: AIManager, batch_size:
                     probe = {"onsite": "site", "full_time": "full", "part_time": "part"}.get(val, val.split("_")[0])
                     if _supported(probe, source_text):
                         setattr(d, attr, val)
+            ai_skills = item.get("required_skills")
+            if isinstance(ai_skills, list):
+                validated_skills: list[str] = []
+                for raw_skill in ai_skills:
+                    if not isinstance(raw_skill, str) or not raw_skill.strip():
+                        continue
+                    if not _supported(raw_skill, source_text):
+                        continue
+                    canon = detector.canonical(raw_skill) if detector else raw_skill.strip()
+                    if canon and canon not in validated_skills:
+                        validated_skills.append(canon)
+                if validated_skills:
+                    d.raw["ai_required_skills"] = validated_skills
+                    d.raw.setdefault("ai_fields", []).append("required_skills")
+            instr = item.get("application_instructions")
+            if isinstance(instr, str) and instr.strip() and _supported(instr.strip()[:60], source_text):
+                d.raw["application_instructions"] = instr.strip()[:500]
+                d.raw.setdefault("ai_fields", []).append("application_instructions")
+                instr_emails = find_emails(instr)
+                if instr_emails:
+                    existing = list(d.raw.get("contact_emails") or [])
+                    for e in instr_emails:
+                        if e not in existing:
+                            existing.append(e)
+                    d.raw["contact_emails"] = existing
             date_txt = item.get("published_date_text")
             if isinstance(date_txt, str) and _supported(date_txt, source_text):
                 dt = parse_datetime(date_txt)

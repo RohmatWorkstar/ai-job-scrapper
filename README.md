@@ -49,31 +49,23 @@ copy .env.example .env                 # lalu isi .env (lihat tabel di bawah)
 ```powershell
 .venv\Scripts\activate
 
-# 1. Cari lowongan (Enter = pakai jawaban default/tersimpan)
+# Pintu utama interaktif (Hub): Search, Browse/Filter Jobs, Prepare, Review, Send Queue, Pipeline & Setup
 python main.py
-#    Laporan: reports\<tanggal>\JOB_SEARCH_RESULTS.xlsx (semua lowongan + link apply)
-#    Di akhir terlihat berapa lowongan yang menerima lamaran lewat e-mail.
 
-# 2. Siapkan lamaran (pilih salah satu)
-python main.py --apply basic    # CV PDF asli + e-mail template (cepat)
-python main.py --apply ai       # analisis lowongan, skor match, CV PDF disesuaikan per lowongan
-
-# 3. Review setiap lamaran yang muncul di layar:
-#    Approve and send now | Approve (queue) | Edit e-mail (Notepad) | Regenerate CV | Open CV PDF
-#    Decide later | Reject | Skip | Stop reviewing
-#    Lamaran yang belum diputuskan bisa direview lagi nanti:
-python main.py --review
-
-# 4. Kirim yang sudah di-approve (mematuhi batas kirim, berhenti sendiri saat batas tercapai)
-python main.py --send-queue
-
-# 5. Cek hasil
-python main.py --applications      # riwayat semua lamaran + status
-python main.py --sending-status    # kuota hari ini, jeda, status pause/stop
+# Atau jalankan langsung via flag CLI (kompatibel penuh dengan skrip & Task Scheduler):
+python main.py --search                       # langsung mulai pencarian lowongan
+python main.py --apply web                    # Web/ATS Assist: CV PDF tailored + Cover Note + buka URL + tandai Applied
+python main.py --apply ai --channel all       # E-mail untuk job ber-email, otomatis fallback ke Web/ATS Assist
+python main.py --apply basic                  # CV PDF asli + e-mail template (cepat)
+python main.py --apply ai --all-recent 14     # proses lowongan lintas sesi dalam 14 hari terakhir
+python main.py --review                       # review lamaran pending (Email & Web/ATS)
+python main.py --send-queue                   # kirim antrean e-mail yang sudah di-approve
+python main.py --applications                 # riwayat lamaran + funnel pipeline (opsional: --status INTERVIEW)
+python main.py --update-status <ID> interview --note "HR call Senin"
+python main.py --sending-status               # kuota hari ini, jeda, status pause/stop
 ```
 
-Lowongan yang **tidak** punya e-mail lamaran (kebanyakan board ATS: Greenhouse, Lever, dan
-sejenisnya) dilamar manual lewat kolom *Application URL* di file XLSX.
+Semua lowongan — baik yang lewat **Web/ATS** (Greenhouse, Lever, Ashby, SmartRecruiters, We Work Remotely, Working Nomads) maupun yang lewat **E-mail** — kini bisa memakai **tailored ATS CV PDF**, **cover note**, dan **Application Tracker** hingga tahap *Interview*, *Offer*, *Employer Rejected*, atau *Withdrawn*.
 
 ### C. Mode tes vs kirim sungguhan
 
@@ -207,9 +199,12 @@ Timezone: Asia/Jakarta
 
 | Option | Purpose |
 |---|---|
+| *(no action flags, interactive)* | Launch the **Interactive Hub** (Search, Browse Jobs, Prepare, Review, Send Queue, Pipeline, Setup/Health) |
+| `--search` | Jump directly into the job search flow without opening the Hub |
 | `--cv FILE` | Use this file from `cv/` and skip the selection prompt |
 | `--defaults` | Non-interactive run: use saved answers (or the defaults) for every question |
-| `--no-ai` | Do not call the AI provider in this run |
+| `--no-ai` | Do not call the AI provider in this run (propagated across CV, extraction, matching and tailoring) |
+| `--ai-consent` | Explicitly opt in to Gemini CV analysis in non-interactive (`--defaults`) mode |
 | `--max-queries N` | Override the paid web-search query budget for this run |
 | `--check` | Check the configuration and test each source, then exit |
 | `--history` | List previous search sessions |
@@ -260,8 +255,8 @@ The technology list used to detect skills in CVs and job posts. Extend it freely
 | **Ashby** company boards | Official Job Posting API | ✅ Fully implemented, no key needed |
 | **SmartRecruiters** company boards | Official Posting API | ✅ Fully implemented, no key needed |
 | ATS board **auto-discovery** | Board names taken from search-result URLs, then crawled through the APIs above | ✅ Implemented, needs a search key |
-| **Remotive, Remote OK, Arbeitnow, Jobicy, Himalayas** | Their public job APIs, with attribution kept and responses cached | ✅ Fully implemented, no key needed. Himalayas is often slow, and timeouts are reported. |
-| **Hacker News "Who is hiring?"** | HN Search API (Algolia) | ✅ Fully implemented, no key needed |
+| **Remotive, Remote OK, Arbeitnow, Jobicy, Himalayas, Working Nomads, We Work Remotely (RSS)** | Public job APIs & RSS feeds, with attribution kept and responses cached | ✅ Fully implemented, no key needed. Himalayas is often slow, and timeouts are reported. |
+| **Hacker News "Who is hiring?"** | HN Search API (Algolia) with monthly-aware window | ✅ Fully implemented, no key needed |
 | **Web search** (targeted hiring queries) | Brave Search API | 🔑 Implemented, needs `SEARCH_API_KEY` |
 | **Job portals**: LinkedIn Jobs, JobStreet, Indeed, Glints, Kalibrr, Glassdoor, Wellfound, Tech in Asia, Dealls, We Work Remotely | Publicly indexed pages through `site:` search queries | 🔑 Implemented, needs a search key. These portals are not scraped directly. |
 | **Social media**: LinkedIn posts, X, Facebook, Instagram, Threads | Publicly indexed posts through search | 🔑 Implemented, needs a search key. Only public, indexed content is used. |
@@ -435,21 +430,24 @@ register it in `PROVIDERS`.
 
 ---
 
-## 11. Application automation (e-mail applications)
+## 11. Multi-channel application automation (E-mail & Web/ATS Assist)
 
-Applies by e-mail to scraped jobs whose posting contains an application address. Every e-mail
-needs your approval, and sending goes through conservative Gmail safety limits. Full details,
-the Gmail limit research and the setup guide are in
-[FINAL_DEVELOPMENT_REPORT.md](FINAL_DEVELOPMENT_REPORT.md).
+Supports both direct **e-mail applications** (approval-gated with Gmail safety limits) and **Web/ATS Assist**
+(tailored ATS PDF CV + paste-ready cover note + browser launch + manual `APPLIED_WEB` confirmation) plus full
+post-apply lifecycle tracking (`INTERVIEW`, `OFFER`, `EMPLOYER_REJECTED`, `WITHDRAWN`).
 
 ```powershell
-python main.py                                 # 1. search jobs (unchanged)
+python main.py                                 # Interactive Hub (recommended daily entry point)
 python main.py --setup-check                   # what is set up / what you still have to do manually
-python main.py --apply basic                   # 2a. original CV PDF + template e-mail, review each one
-python main.py --apply ai                      # 2b. AI job analysis, match score, tailored CV PDF + e-mail
-python main.py --review                        # review applications still waiting for approval
-python main.py --send-queue                    # send approved applications within the limits
-python main.py --applications                  # application history
+python main.py --apply web                     # Web/ATS Assist: tailored CV PDF + cover note for web/ATS jobs
+python main.py --apply ai --channel all        # e-mail when available, otherwise Web/ATS Assist
+python main.py --apply basic                   # original CV PDF + template e-mail, review each one
+python main.py --apply ai                      # AI job analysis, match score, tailored CV PDF + e-mail
+python main.py --apply web --all-recent 14     # prepare from deduplicated jobs across the last 14 days
+python main.py --review                        # review pending e-mail and Web/ATS applications
+python main.py --send-queue                    # send approved e-mail applications within the limits
+python main.py --applications [--status X]     # application history & pipeline funnel
+python main.py --update-status <ID> interview --note "Technical screen"
 python main.py --sending-status                # counters, limits, pause / emergency-stop state
 python main.py --emergency-stop                # block all sending immediately (--resume-sending to clear)
 python main.py --requeue <APPLICATION_ID>      # FAILED / unknown delivery -> back to review

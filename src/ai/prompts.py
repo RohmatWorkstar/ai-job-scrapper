@@ -22,11 +22,26 @@ _PHONE_RE = re.compile(r"(?<![\w/])(?:\+?\d[\d\s().-]{7,}\d)(?![\w/])")
 _URL_RE = re.compile(r"(?i)\b(?:https?://|www\.)\S+|\b(?:linkedin|github)\.com/\S+")
 
 
-def redact_personal(text: str) -> str:
-    """Remove direct contact details before CV text leaves the machine."""
+def redact_personal(
+    text: str,
+    *,
+    extra_names: list[str] | None = None,
+    extra_domains: list[str] | None = None,
+) -> str:
+    """Remove direct contact details, personal names and personal domains before CV text leaves the machine."""
+    if not text:
+        return ""
     text = _EMAIL_RE.sub("[email removed]", text)
     text = _URL_RE.sub("[link removed]", text)
+    for dom in extra_domains or []:
+        d = (dom or "").strip().lower()
+        if d and "." in d and d not in {"github.com", "gitlab.com", "linkedin.com"}:
+            text = re.sub(rf"(?i)\b(?:https?://)?(?:www\.)?{re.escape(d)}(?:/\S*)?", "[link removed]", text)
     text = _PHONE_RE.sub(lambda m: m.group(0) if re.fullmatch(r"\d{4}\s*[-–]\s*\d{4}", m.group(0).strip()) else "[phone removed]", text)
+    for name in extra_names or []:
+        n = (name or "").strip()
+        if len(n) >= 4:
+            text = re.sub(rf"(?i)(?<!\w){re.escape(n)}(?!\w)", "[name removed]", text)
     return text
 
 
@@ -155,6 +170,23 @@ def application_email_prompt(job: dict[str, Any], candidate: dict[str, Any], lan
         "'passionate', 'excited', 'leverage', 'perfect fit', 'proven track record', 'mainly', 'expert', 'extensive', "
         "superlatives or buzzwords. Do not include contact details, links, placeholders like [Name], or a signature: "
         "those are added separately. Start the body with a salutation such as 'Dear Hiring Team,'. "
+        "Return JSON:\n" + json.dumps(schema, indent=1)
+        + "\n\nJob:\n" + fence(json.dumps(job, ensure_ascii=False))
+        + "\n\nCandidate (from the CV):\n" + fence(json.dumps(candidate, ensure_ascii=False))
+    )
+
+
+def cover_note_prompt(job: dict[str, Any], candidate: dict[str, Any], language: str = "en") -> str:
+    schema = {"body": "concise cover note (70-150 words) ready to paste into a web/ATS application form"}
+    lang = "Indonesian (Bahasa Indonesia, formal)" if language == "id" else "English"
+    return (
+        f"Write a short, paste-ready cover note in {lang} (70-150 words) for an online job application form: "
+        "plain, specific and calm. Mention the exact job title and company name, state the candidate's current or "
+        "most recent role (accurately reflecting the dates), include ONE concrete example from the CV experience or "
+        "projects, and highlight directly relevant skills evidenced in the CV. " + NO_FABRICATION + " Do not write "
+        "e-mail headers, subject lines, 'CV is attached', contact details, links, placeholders like [Name], or a "
+        "signature block. Do not use: 'I am writing to', 'passionate', 'excited', 'leverage', 'perfect fit', "
+        "'proven track record', 'expert', 'extensive', superlatives or buzzwords. "
         "Return JSON:\n" + json.dumps(schema, indent=1)
         + "\n\nJob:\n" + fence(json.dumps(job, ensure_ascii=False))
         + "\n\nCandidate (from the CV):\n" + fence(json.dumps(candidate, ensure_ascii=False))

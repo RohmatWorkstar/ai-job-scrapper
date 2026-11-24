@@ -16,6 +16,11 @@ class ApplicationStatus(str, Enum):
     PENDING_APPROVAL = "PENDING_APPROVAL"
     APPROVED = "APPROVED"
     SENT = "SENT"
+    APPLIED_WEB = "APPLIED_WEB"
+    INTERVIEW = "INTERVIEW"
+    OFFER = "OFFER"
+    EMPLOYER_REJECTED = "EMPLOYER_REJECTED"
+    WITHDRAWN = "WITHDRAWN"
     FAILED = "FAILED"
     SKIPPED = "SKIPPED"
 
@@ -27,23 +32,62 @@ TRANSITIONS: dict[ApplicationStatus, set[ApplicationStatus]] = {
     S.NEW: {S.ANALYZED, S.PENDING_APPROVAL, S.REJECTED, S.SKIPPED, S.FAILED},
     S.ANALYZED: {S.MATCHED, S.REJECTED, S.SKIPPED, S.FAILED},
     S.MATCHED: {S.PENDING_APPROVAL, S.REJECTED, S.SKIPPED, S.FAILED},
-    S.PENDING_APPROVAL: {S.PENDING_APPROVAL, S.APPROVED, S.REJECTED, S.SKIPPED},
+    S.PENDING_APPROVAL: {S.PENDING_APPROVAL, S.APPROVED, S.APPLIED_WEB, S.REJECTED, S.SKIPPED},
     # APPROVED -> PENDING_APPROVAL happens when the content changes after approval.
     S.APPROVED: {S.SENT, S.FAILED, S.PENDING_APPROVAL, S.SKIPPED},
     # A failed application is only sent again after the user re-approves it.
     S.FAILED: {S.PENDING_APPROVAL, S.SKIPPED},
-    S.SENT: set(),
+    S.SENT: {S.INTERVIEW, S.OFFER, S.EMPLOYER_REJECTED, S.WITHDRAWN},
+    S.APPLIED_WEB: {S.INTERVIEW, S.OFFER, S.EMPLOYER_REJECTED, S.WITHDRAWN},
+    S.INTERVIEW: {S.OFFER, S.EMPLOYER_REJECTED, S.WITHDRAWN},
+    S.OFFER: {S.WITHDRAWN},
     S.REJECTED: set(),
     S.SKIPPED: set(),
+    S.EMPLOYER_REJECTED: set(),
+    S.WITHDRAWN: set(),
 }
 
-# Records in these states block a second application to the same company + position.
-BLOCKING_STATUSES = {S.NEW, S.ANALYZED, S.MATCHED, S.PENDING_APPROVAL, S.APPROVED, S.SENT}
+# Records in these states block a second application to the same company + position (across channels).
+BLOCKING_STATUSES = {
+    S.NEW,
+    S.ANALYZED,
+    S.MATCHED,
+    S.PENDING_APPROVAL,
+    S.APPROVED,
+    S.SENT,
+    S.APPLIED_WEB,
+    S.INTERVIEW,
+    S.OFFER,
+    S.EMPLOYER_REJECTED,
+    S.WITHDRAWN,
+}
+
+PIPELINE_STATUS_PRECEDENCE: dict[str, int] = {
+    S.OFFER.value: 100,
+    S.INTERVIEW.value: 90,
+    S.SENT.value: 80,
+    S.APPLIED_WEB.value: 80,
+    S.APPROVED.value: 70,
+    S.PENDING_APPROVAL.value: 60,
+    S.FAILED.value: 50,
+    S.EMPLOYER_REJECTED.value: 40,
+    S.WITHDRAWN.value: 35,
+    S.REJECTED.value: 20,
+    S.SKIPPED.value: 20,
+    S.MATCHED.value: 10,
+    S.ANALYZED.value: 8,
+    S.NEW.value: 5,
+}
 
 
 class ApplicationMode(str, Enum):
     BASIC = "basic"
     AI = "ai"
+
+
+class ApplicationChannel(str, Enum):
+    EMAIL = "email"
+    WEB = "web"
 
 
 @dataclass
@@ -68,6 +112,10 @@ class ApplicationRecord:
     dedupe_key: str
     created_at: str
     updated_at: str
+    channel: str = "email"                # email | web
+    closed_by: str | None = None          # system | user | None
+    sender_name: str | None = None
+    follow_up_at: str | None = None
     job_key: str | None = None
     session_id: str | None = None
     company_name: str | None = None

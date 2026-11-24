@@ -143,7 +143,7 @@ class RemotiveSource(FeedSource):
         out = []
         for j in data.get("jobs", []):
             d = self._base(url=j["url"], title=j.get("title", ""), company=j.get("company_name"),
-                           text=html_to_text(j.get("description"), 6000), published=j.get("publication_date"),
+                           text=html_to_text(j.get("description"), 40000), published=j.get("publication_date"),
                            apply_url=j.get("url"), location=j.get("candidate_required_location"), ext_id=j.get("id"),
                            tags=j.get("tags"))
             d.work_arrangement = "remote"
@@ -177,7 +177,7 @@ class RemoteOKSource(FeedSource):
                 continue
             tags = j.get("tags") if isinstance(j.get("tags"), list) else []
             d = self._base(url=j["url"], title=j.get("position", ""), company=j.get("company"),
-                           text=html_to_text(j.get("description"), 6000), published=j.get("date") or j.get("epoch"),
+                           text=html_to_text(j.get("description"), 40000), published=j.get("date") or j.get("epoch"),
                            apply_url=j.get("apply_url") or j.get("url"), location=j.get("location"), ext_id=j.get("id"),
                            tags=tags)
             d.work_arrangement = "remote"
@@ -211,7 +211,7 @@ class ArbeitnowSource(FeedSource):
         out = []
         for j in data.get("data", []):
             d = self._base(url=j["url"], title=j.get("title", ""), company=j.get("company_name"),
-                           text=html_to_text(j.get("description"), 6000), published=j.get("created_at"),
+                           text=html_to_text(j.get("description"), 40000), published=j.get("created_at"),
                            apply_url=j.get("url"), location=j.get("location"), ext_id=j.get("slug"), tags=j.get("tags"))
             d.work_arrangement = "remote" if j.get("remote") else None
             d.employment_type = (j.get("job_types") or [None])[0]
@@ -235,7 +235,7 @@ class JobicySource(FeedSource):
         out = []
         for j in data.get("jobs", []):
             d = self._base(url=j["url"], title=j.get("jobTitle", ""), company=j.get("companyName"),
-                           text=html_to_text(j.get("jobDescription") or j.get("jobExcerpt"), 6000),
+                           text=html_to_text(j.get("jobDescription") or j.get("jobExcerpt"), 40000),
                            published=j.get("pubDate"), apply_url=j.get("url"), location=j.get("jobGeo"),
                            ext_id=j.get("id"), tags=(j.get("jobIndustry") or []))
             d.work_arrangement = "remote"
@@ -277,7 +277,7 @@ class HimalayasSource(FeedSource):
                 continue
             restrictions = [str(x) for x in (j.get("locationRestrictions") or [])]
             d = self._base(url=url, title=j.get("title", ""), company=j.get("companyName"),
-                           text=html_to_text(j.get("description") or j.get("excerpt"), 6000),
+                           text=html_to_text(j.get("description") or j.get("excerpt"), 40000),
                            published=j.get("pubDate"), apply_url=j.get("applicationLink"),
                            location=", ".join(restrictions) or None, ext_id=url,
                            tags=[str(c) for c in (j.get("categories") or [])])
@@ -295,5 +295,45 @@ class HimalayasSource(FeedSource):
                         str(j.get("salaryPeriod") or "").lower(), j.get("salaryPeriod"))
                 except (TypeError, ValueError):
                     pass
+            out.append(d)
+        return out
+
+
+class WorkingNomadsSource(FeedSource):
+    name = "Working Nomads"
+    provider_name = "Working Nomads"
+    description = "Remote jobs API (workingnomads.com) - public JSON feed"
+
+    def applicable(self, ctx: DiscoveryContext) -> tuple[bool, str]:
+        return RemotiveSource.applicable(self, ctx)  # type: ignore[arg-type]
+
+    def requests(self, ctx: DiscoveryContext) -> list[tuple[str, dict[str, Any]]]:
+        return [("https://www.workingnomads.com/api/exposed_jobs/", {})]
+
+    def parse(self, data: Any, ctx: DiscoveryContext) -> list[RawDiscovery]:
+        out: list[RawDiscovery] = []
+        for j in data if isinstance(data, list) else []:
+            if not isinstance(j, dict) or not j.get("url"):
+                continue
+            raw_tags = j.get("tags") or ""
+            tags = [t.strip() for t in str(raw_tags).split(",") if t.strip()]
+            cat = str(j.get("category_name") or "").strip()
+            if cat and cat not in tags:
+                tags.append(cat)
+            loc = str(j.get("location") or "").strip() or None
+            d = self._base(
+                url=str(j["url"]),
+                title=str(j.get("title") or ""),
+                company=str(j.get("company_name") or "").strip() or None,
+                text=html_to_text(j.get("description"), 40000),
+                published=j.get("pub_date"),
+                apply_url=str(j["url"]),
+                location=loc,
+                ext_id=str(j["url"]),
+                tags=tags,
+            )
+            d.work_arrangement = "remote"
+            if loc:
+                d.location_restrictions = [loc]
             out.append(d)
         return out

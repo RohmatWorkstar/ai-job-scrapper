@@ -14,12 +14,13 @@ import re
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
-from src.applications.cv_document import CVDocument
 from src.applications.job_analyzer import JobAnalysis
 from src.core.configuration import Settings
 from src.core.models import JobOpportunity, MatchResult, SearchConfig
+from src.cv.document import CVDocument
 from src.cv.models import CandidateProfile
-from src.intelligence.matching import IMPLIED_SKILLS, Matcher
+from src.discovery.query_generator import Preferences
+from src.intelligence.matching import ASIA_WORDS, GLOBAL_REMOTE_WORDS, IMPLIED_SKILLS, Matcher
 
 WEIGHTS = {"skills": 40.0, "title": 25.0, "experience": 20.0, "keywords": 15.0}
 
@@ -50,13 +51,17 @@ def _has(text_lower: str, term: str) -> bool:
 
 
 class CVMatcher:
-    def __init__(self, settings: Settings, profile: CandidateProfile) -> None:
+    def __init__(self, settings: Settings, profile: CandidateProfile,
+                 config: SearchConfig | None = None, preferences: Preferences | None = None) -> None:
         self.settings = settings
         self.profile = profile
+        self.config = config
+        self.prefs = preferences or Preferences()
+        self.home_country = str(settings.get("candidate.home_country", "Indonesia"))
         cfg = settings.get("applications.ai.match_weights", WEIGHTS) or WEIGHTS
         total = sum(float(v) for v in cfg.values()) or 1.0
         self.weights = {k: float(cfg.get(k, 0)) * 100.0 / total for k in WEIGHTS}
-        self.matcher = Matcher(settings, profile, SearchConfig())
+        self.matcher = Matcher(settings, profile, config or SearchConfig(), self.prefs)
 
     def _cv_skills(self, doc: CVDocument) -> dict[str, str]:
         """lower-case skill -> how it is evidenced."""
@@ -115,9 +120,31 @@ class CVMatcher:
                 r.relevant_experience.append({"index": i, "title": e.title, "company": e.company,
                                               "matched_terms": hits[:10], "score": len(hits)})
         r.relevant_experience.sort(key=lambda x: -x["score"])
-        r.relevant_projects = [p for p in doc.projects if any(_has(p.lower(), t) for t in terms)]
+        rel_projects: list[str] = []
+        for pe in doc.project_entries:
+            pblob = " ".join([pe.title, pe.company, *pe.bullets]).lower()
+            if any(_has(pblob, t) for t in terms):
+                label = " - ".join(v for v in (pe.title, pe.company) if v)
+                if label and label not in rel_projects:
+                    rel_projects.append(label)
+        for p in doc.projects:
+            if any(_has(p.lower(), t) for t in terms) and p not in rel_projects:
+                rel_projects.append(p)
+        r.relevant_projects = rel_projects
         r.recommended_sections = ["Summary", "Skills", "Experience"] + (["Projects"] if r.relevant_projects else []) + \
             ["Education"] + (["Certifications"] if doc.certifications else []) + (["Languages"] if doc.languages else [])
+
+        # Align with search preferences & work-arrangement / location restrictions.
+        job_blob = f"{job.company_name or ''} {job.job_title} {job.job_description[:3000]}".lower()
+        for term in self.prefs.negative:
+            if term and re.search(rf"(?<!\w){re.escape(term)}", job_blob):
+                r.concerns.append(f"Matches excluded preference ('{term}').")
+                r.overall_score = int(round(r.overall_score * 0.75))
+        if self.config and self.config.work_arrangements and job.work_arrangement != "unknown":
+            if job.work_arrangement not in set(self.config.work_arrangements):
+                r.concerns.append(
+                    f"Work arrangement is '{job.work_arrangement}', outside preferred {self.config.work_arrangements}."
+                )
 
         r.explanation += mr.explanation[:1]
         r.explanation.append(f"Skills: {len(m_req)}/{len(req)} required" + (f", {len(m_pref)}/{len(pref)} preferred" if pref else "")
@@ -130,7 +157,14 @@ class CVMatcher:
         if job.verification_status in ("UNVERIFIED", "NEEDS_REVIEW"):
             r.concerns.append(f"Posting status is {job.verification_status}: confirm it is open before applying.")
         if job.location_restrictions:
-            r.concerns.append(f"Location restrictions: {', '.join(job.location_restrictions[:5])}.")
+            restr_text = " ".join(job.location_restrictions)
+            if not (GLOBAL_REMOTE_WORDS.search(restr_text) or ASIA_WORDS.search(restr_text)
+                    or self.home_country.lower() in restr_text.lower()):
+                r.concerns.append(
+                    f"Location restrictions ({', '.join(job.location_restrictions[:5])}) may not include {self.home_country}."
+                )
+            else:
+                r.concerns.append(f"Location restrictions: {', '.join(job.location_restrictions[:5])}.")
         if len(r.missing_skills) > max(2, len(req) // 2):
             r.concerns.append("More than half of the required technologies are not evidenced in the CV.")
         return r

@@ -48,6 +48,18 @@ def safe_text(value: Any, limit: int | None = None) -> str:
     return s
 
 
+def apply_channel_label(j: JobOpportunity) -> str:
+    has_email = bool(j.application_emails)
+    has_url = bool(j.application_url)
+    if has_email and has_url:
+        return "Email & Web"
+    if has_email:
+        return "Email"
+    if has_url:
+        return "Web/ATS"
+    return "Manual/Unknown"
+
+
 def salary_display(j: JobOpportunity) -> str:
     if j.salary_min is not None:
         rng = f"{j.salary_min:,.0f}" + (f" - {j.salary_max:,.0f}" if j.salary_max else "")
@@ -79,6 +91,8 @@ class ReportData:
     home_country: str = "Indonesia"
     new_jobs: int = 0
     countries_searched: list[str] = field(default_factory=list)
+    application_statuses: dict[str, str] = field(default_factory=dict)
+    applications: list[dict[str, Any]] = field(default_factory=list)
 
     # ---------------------------------------------------------------- formatting
     def fmt(self, dt: datetime | None, with_time: bool = True) -> str:
@@ -165,6 +179,7 @@ class ReportData:
             "inaccessible": ver[VerificationStatus.INACCESSIBLE.value],
             "possible_scam": ver[VerificationStatus.POSSIBLE_SCAM.value],
             "new_since_previous_searches": self.new_jobs,
+            "email_applicable": sum(1 for j in self.jobs if j.application_emails),
             "queries_executed": len(self.queries),
         }
 

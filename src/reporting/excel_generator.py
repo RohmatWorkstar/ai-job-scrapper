@@ -17,7 +17,7 @@ from openpyxl.worksheet.worksheet import Worksheet
 
 from src.core.exceptions import ReportGenerationError
 from src.core.models import JobOpportunity, RelevanceCategory, SourceType
-from src.reporting.report_models import STATUS_LABEL, ReportData, safe_text
+from src.reporting.report_models import STATUS_LABEL, ReportData, apply_channel_label, safe_text
 from src.utils.date_time import to_local
 
 HEADER_FILL = PatternFill("solid", fgColor="1F3A5F")
@@ -125,6 +125,9 @@ class ExcelReportGenerator:
             Col("Source Name", lambda j: j.source_name, 22),
             Col("Source URL", lambda j: j.source_url, 45, link=True),
             Col("Application URL", lambda j: j.application_url or "", 45, link=True),
+            Col("Apply Channel", lambda j: apply_channel_label(j), 14),
+            Col("Application Email", lambda j: ", ".join(j.application_emails), 28),
+            Col("Application Status", lambda j: d.application_statuses.get(j.job_id, "Not applied"), 20),
             Col("Additional Sources", lambda j: "\n".join(f"{s.source_name}: {s.source_url}" for s in j.additional_sources), 45),
             Col("Matched Skills", lambda j: ", ".join(j.match.matched_skills), 30),
             Col("Missing Requirements", lambda j: ", ".join(j.match.missing_skills), 30),
@@ -197,6 +200,36 @@ class ExcelReportGenerator:
                     rows, [26, 16, 80, 12, 9, 40, 26])
         ws.freeze_panes = "A2"
 
+    def tracker_sheet(self) -> None:
+        ws = self.wb.create_sheet("Application Tracker")
+        rows = [
+            [
+                a.get("id", ""),
+                a.get("channel", "email"),
+                a.get("mode", ""),
+                a.get("status", ""),
+                int(round(a["match_score"])) if a.get("match_score") is not None else "",
+                a.get("company_name", ""),
+                a.get("job_title", ""),
+                a.get("recipient_or_url", ""),
+                a.get("cv_file", ""),
+                str(a.get("updated_at") or "")[:16],
+                str(a.get("sent_at") or "")[:16],
+                a.get("notes", ""),
+            ]
+            for a in self.d.applications
+        ]
+        self._table(
+            ws,
+            1,
+            ["ID", "Channel", "Mode", "Status", "Score", "Company", "Job Title", "Recipient / Apply URL",
+             "CV File", "Updated", "Sent / Applied", "Notes"],
+            rows,
+            [14, 10, 10, 18, 8, 22, 34, 42, 38, 17, 17, 45],
+            link_cols={8},
+        )
+        ws.freeze_panes = "A2"
+
     def build(self) -> Workbook:
         d = self.d
         cols = self.columns()
@@ -207,6 +240,8 @@ class ExcelReportGenerator:
         intl = [j for jobs in d.international().values() for j in jobs]
         self._sheet("International Jobs", cols, intl)
         self._sheet("Needs Verification", cols, d.needs_attention())
+        if d.applications:
+            self.tracker_sheet()
         self.coverage_sheet()
         self.queries_sheet()
         return self.wb

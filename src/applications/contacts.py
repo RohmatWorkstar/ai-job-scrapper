@@ -80,17 +80,35 @@ def select_recipient(job: JobOpportunity, *, own_email: str | None = None,
             rejected.append(f"{c}: {why}")
     if not valid:
         return RecipientCheck(None, False, ["No usable application address."] + rejected, candidates=candidates)
-    # Prefer an address on the company's own website domain when one is known.
+    freemail_blocked: list[str] = []
+    if not allow_freemail:
+        corporate = [v for v in valid if v.rsplit("@", 1)[1] not in FREEMAIL_DOMAINS]
+        freemail_blocked = [v for v in valid if v.rsplit("@", 1)[1] in FREEMAIL_DOMAINS]
+        if not corporate:
+            return RecipientCheck(
+                None,
+                False,
+                [f"{freemail_blocked[0]}: free-mail address (disabled by allow_freemail_recipients)"],
+                candidates=candidates,
+            )
+        valid = corporate
+    # Rank valid candidates: company website domain > corporate domain > freemail.
     site = (job.company_website or "").lower()
     site_domain = re.sub(r"^https?://(www\.)?", "", site).split("/")[0]
-    best = next((v for v in valid if site_domain and v.endswith("@" + site_domain)), valid[0])
+    def _rank(addr: str) -> tuple[int, int]:
+        dom = addr.rsplit("@", 1)[1]
+        if site_domain and (dom == site_domain or dom.endswith("." + site_domain)):
+            return (0, valid.index(addr))
+        if dom not in FREEMAIL_DOMAINS:
+            return (1, valid.index(addr))
+        return (2, valid.index(addr))
+
+    ranked = sorted(valid, key=_rank)
+    best = ranked[0]
     check = RecipientCheck(best, True, candidates=candidates)
     domain = best.rsplit("@", 1)[1]
     if domain in FREEMAIL_DOMAINS:
-        if not allow_freemail:
-            return RecipientCheck(None, False, [f"{best}: free-mail address (disabled by allow_freemail_recipients)"],
-                                  candidates=candidates)
         check.warnings.append(f"{best} is a free-mail address; confirm it really belongs to the employer.")
-    if len(valid) > 1:
-        check.warnings.append(f"Other addresses in the posting: {', '.join(v for v in valid if v != best)}")
+    if len(ranked) > 1:
+        check.warnings.append(f"Other addresses in the posting: {', '.join(v for v in ranked if v != best)}")
     return check

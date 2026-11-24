@@ -169,12 +169,24 @@ _SENIORITY_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
 ]
 
 
+_DESC_SENIORITY_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
+    ("lead", re.compile(r"(?i)(?:seeking|looking\s+for|hiring|role\s*(?:is|level)|level|seniority)\s*[:\-]?\s*(?:a\s+|an\s+)?(?:tech\s+lead|team\s+lead|principal|staff\s+(?:software\s+)?engineer|lead\s+(?:software\s+|backend\s+|frontend\s+|fullstack\s+)?(?:engineer|developer))\b")),
+    ("senior", re.compile(r"(?i)(?:seeking|looking\s+for|hiring|role\s*(?:is|level)|level|seniority)\s*[:\-]?\s*(?:a\s+|an\s+)?(?:senior|sr\.?)\b")),
+    ("entry", re.compile(r"(?i)\b(?:entry[\s-]level|fresh\s*graduate|new\s+grad|magang)\b|(?:seeking|looking\s+for|hiring|level|seniority)\s*[:\-]?\s*(?:a\s+|an\s+)?(?:intern(?:ship)?|graduate|trainee)\b")),
+    ("junior", re.compile(r"(?i)(?:seeking|looking\s+for|hiring|role\s*(?:is|level)|level|seniority)\s*[:\-]?\s*(?:a\s+|an\s+)?(?:junior|jr\.?|associate)\b")),
+    ("mid", re.compile(r"(?i)\bmid[\s-]?level\b|(?:seeking|looking\s+for|hiring|role\s*(?:is|level)|level|seniority)\s*[:\-]?\s*(?:a\s+|an\s+)?(?:mid[\s-]?senior|intermediate|medior)\b")),
+]
+
+
 def detect_seniority(title: str | None, description: str | None = None) -> str:
-    for text in (title, (description or "")[:1500]):
-        if not text:
-            continue
+    if title:
         for name, pat in _SENIORITY_PATTERNS:
-            if pat.search(text):
+            if pat.search(title):
+                return name
+    desc = (description or "")[:1500]
+    if desc:
+        for name, pat in _DESC_SENIORITY_PATTERNS:
+            if pat.search(desc):
                 return name
     return "unknown"
 
@@ -216,12 +228,33 @@ _CURRENCY_SYMBOLS = {
 }
 _CUR_ALT = "|".join(sorted((re.escape(k) for k in _CURRENCY_SYMBOLS), key=len, reverse=True))
 _NUM = r"\d{1,3}(?:[.,\s]\d{3})+(?:[.,]\d+)?|\d+(?:[.,]\d+)?"
-_MULT = r"(?:\s?(?:k|K|rb|ribu|jt|juta|m|M|mn|mio|million|billion|miliar))?"
+_MULT = r"(?:\s?(?:k|K|rb|ribu|jt|juta|m|M|mn|mio|million|billion|miliar)\b)?"
 _SALARY_RE = re.compile(
     rf"(?i)(?<![\w])({_CUR_ALT})\s?({_NUM}){_MULT}(?:\s*(?:-|–|—|to|sampai|s/d|s\.d\.)\s*(?:{_CUR_ALT})?\s?({_NUM}))?({_MULT})"
-    rf"(?:\s*(?:/|per|a)\s*(hour|hr|month|bulan|bln|year|yr|annum|annual|tahun|day|week))?"
+    rf"(?:\s*(?:/|per|a)\s*(hour|hr|month|mo|bulan|bln|year|yr|annum|annual|tahun|day|week)\b)?"
 )
 _JUTA_RE = re.compile(rf"(?i)\b({_NUM})\s*(?:-|–|to|sampai)?\s*({_NUM})?\s*(jt|juta)\b")
+_NON_SALARY_CTX = re.compile(
+    r"(?i)\b(series\s+[a-f]|funding|funded|raised|raise|valuation|revenue|arr|mrr|gm[vw]|market\s+cap|"
+    r"users?|pengguna|customers?|transaksi|transactions?|downloads?|invested|investment|aum|assets?|"
+    r"capital|backed|trillion|triliun|employees?|clients?|merchants?|visits?|views?|orders?)\b"
+)
+_SALARY_CUE_RE = re.compile(
+    r"(?i)\b(salary|compensation|pay(?:\s+range)?|base|ote|remuneration|remunerasi|gaji|upah|kompensasi|"
+    r"penghasilan|take\s+home|thp|stipend|rate|kisaran)\b|/(?:yr|year|month|mo|hour|hr|bln|bulan|tahun)\b"
+)
+_SALARY_CTX_ID = re.compile(
+    r"(?i)\b(gaji|salary|upah|kompensasi|penghasilan|take\s+home|thp|remunerasi|kisaran|range|rate|"
+    r"rp|idr|bulan|bln|per\s+bulan|gross|nett?)\b|/bln|/bulan"
+)
+_MAX_SALARY_BY_CURRENCY = {
+    "IDR": 2_000_000_000.0,
+    "VND": 5_000_000_000.0,
+    "KRW": 200_000_000.0,
+    "JPY": 200_000_000.0,
+    "INR": 100_000_000.0,
+}
+_DEFAULT_MAX_SALARY = 2_000_000.0
 
 
 def _to_number(token: str, mult: str | None) -> float | None:
@@ -261,11 +294,17 @@ def _norm_period(p: str | None) -> str | None:
     p = p.lower()
     if p in {"hour", "hr"}:
         return "hour"
-    if p in {"month", "bulan", "bln"}:
+    if p in {"month", "mo", "bulan", "bln"}:
         return "month"
     if p in {"year", "yr", "annum", "annual", "tahun"}:
         return "year"
     return p
+
+
+def _salary_within_bounds(currency: str | None, lo: float, hi: float | None) -> bool:
+    cap = _MAX_SALARY_BY_CURRENCY.get(currency or "", _DEFAULT_MAX_SALARY)
+    top = hi if hi is not None else lo
+    return 0 < lo <= cap and top <= cap
 
 
 def parse_salary(text: str | None) -> SalaryInfo | None:
@@ -276,7 +315,7 @@ def parse_salary(text: str | None) -> SalaryInfo | None:
         cur_token, a, b, mult_tail = m.group(1), m.group(2), m.group(3), m.group(4)
         whole = m.group(0)
         # Multiplier written once after the range applies to both ends ("$120-150k").
-        inner_mult = re.search(rf"{re.escape(a)}\s?(k|K|rb|ribu|jt|juta|m|M|mn|mio|million)\b", whole)
+        inner_mult = re.search(rf"{re.escape(a)}\s?(k|K|rb|ribu|jt|juta|m|M|mn|mio|million|billion|miliar)\b", whole)
         mult_a = inner_mult.group(1) if inner_mult else mult_tail
         lo = _to_number(a, mult_a)
         hi = _to_number(b, mult_tail or mult_a) if b else None
@@ -287,12 +326,23 @@ def parse_salary(text: str | None) -> SalaryInfo | None:
         currency = _CURRENCY_SYMBOLS.get(cur_token.lower())
         if hi is not None and hi < lo:
             lo, hi = hi, lo
+        if not _salary_within_bounds(currency, lo, hi):
+            continue
+        ctx = text[max(0, m.start() - 45): min(len(text), m.end() + 45)]
+        near_before = text[max(0, m.start() - 25): m.end()]
+        if _NON_SALARY_CTX.search(ctx) and not _SALARY_CUE_RE.search(near_before) and not m.group(5):
+            continue
         return SalaryInfo(lo, hi, currency, _norm_period(m.group(5)), whole.strip())
-    m = _JUTA_RE.search(text)
-    if m:
+    for m in _JUTA_RE.finditer(text):
+        ctx = text[max(0, m.start() - 60): min(len(text), m.end() + 60)]
+        after = text[m.end(): min(len(text), m.end() + 25)]
+        if _NON_SALARY_CTX.search(after) or not _SALARY_CTX_ID.search(ctx):
+            continue
         lo = _to_number(m.group(1), "jt")
         hi = _to_number(m.group(2), "jt") if m.group(2) else None
-        if lo:
+        if lo and _salary_within_bounds("IDR", lo, hi):
+            if hi is not None and hi < lo:
+                lo, hi = hi, lo
             return SalaryInfo(lo, hi, "IDR", "month", m.group(0).strip())
     return None
 

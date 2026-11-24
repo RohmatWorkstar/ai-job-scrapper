@@ -36,6 +36,7 @@ log = get_logger(__name__)
 TEXT_CONTENT_TYPES = ("text/html", "application/xhtml+xml", "application/json", "text/plain", "application/ld+json",
                       "text/xml", "application/xml", "application/rss+xml", "application/atom+xml")
 RETRYABLE_STATUS = {408, 425, 429, 500, 502, 503, 504}
+NON_RETRYABLE_ERROR_KINDS = {"content_type", "too_large", "unsafe_url", "blocked_robots", "policy"}
 MAX_REDIRECTS = 5
 
 
@@ -250,7 +251,10 @@ class SafeHttpClient:
         for attempt in range(attempts + 1):
             result = await self._single(method, url, headers, json_body, data, auth, accept_any_text,
                                         max_bytes or self.max_bytes)
-            retryable = (result.error_kind in {"network", "timeout"}) or (result.status in RETRYABLE_STATUS)
+            retryable = (
+                result.error_kind not in NON_RETRYABLE_ERROR_KINDS
+                and ((result.error_kind in {"network", "timeout"}) or (result.status in RETRYABLE_STATUS))
+            )
             if not retryable or attempt >= attempts:
                 break
             retry_after = None
@@ -344,11 +348,21 @@ class SafeHttpClient:
             return HttpResult(url=url, final_url=final_url, status=resp.status_code,
                               error=f"Network error: {type(exc).__name__}", error_kind="network", elapsed_ms=elapsed())
         raw = b"".join(chunks)
-        encoding = resp.charset_encoding or "utf-8"
-        try:
-            text = raw.decode(encoding, errors="replace")
-        except LookupError:
-            text = raw.decode("utf-8", errors="replace")
+        if ctype in {"application/json", "application/ld+json"}:
+            try:
+                text = raw.decode("utf-8")
+            except UnicodeDecodeError:
+                encoding = resp.charset_encoding or "utf-8"
+                try:
+                    text = raw.decode(encoding, errors="replace")
+                except LookupError:
+                    text = raw.decode("utf-8", errors="replace")
+        else:
+            encoding = resp.charset_encoding or "utf-8"
+            try:
+                text = raw.decode(encoding, errors="replace")
+            except LookupError:
+                text = raw.decode("utf-8", errors="replace")
         result = HttpResult(url=url, final_url=final_url, status=resp.status_code, text=text, headers=headers,
                             elapsed_ms=elapsed())
         if not 200 <= resp.status_code < 300:

@@ -68,6 +68,8 @@ discovery:
     - src.sources.job_portals.remote_feeds:ArbeitnowSource
     - src.sources.job_portals.remote_feeds:JobicySource
     - src.sources.job_portals.remote_feeds:HimalayasSource
+    - src.sources.job_portals.remote_feeds:WorkingNomadsSource
+    - src.sources.job_portals.rss_feeds:WeWorkRemotelySource
     - src.sources.company_careers.career_pages:CompanyCareerPagesSource
     - src.sources.ats_platforms.ats:GreenhouseSource
     - src.sources.ats_platforms.ats:LeverSource
@@ -171,6 +173,8 @@ performance:
     api.search.brave.com: 1.1
     remotive.com: 2.0
     remoteok.com: 2.0
+    weworkremotely.com: 2.0
+    www.workingnomads.com: 2.0
     www.reddit.com: 2.0
     oauth.reddit.com: 1.0
     hn.algolia.com: 0.5
@@ -187,10 +191,12 @@ performance:
     www.arbeitnow.com: 1
     jobicy.com: 2
     himalayas.app: 2
+    weworkremotely.com: 4
+    www.workingnomads.com: 4
     default: 0.5
 
 applications:
-  # E-mail application automation (python main.py --apply basic|ai). See FINAL_DEVELOPMENT_REPORT.md.
+  # Multi-channel application automation (python main.py Interactive Hub, or --apply basic|ai|web --channel email|web|all).
   generated_cv_directory: data/generated_cvs     # tailored CV PDFs (git-ignored); originals in cv/ are never modified
   email_templates_file: config/email_templates.yaml
   email_language: auto                            # auto (from the posting) | en | id

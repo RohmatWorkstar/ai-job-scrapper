@@ -123,6 +123,15 @@ class Orchestrator:
     def close(self) -> None:
         self.db.close()
 
+    def _application_snapshot(self) -> tuple[dict[str, str], list[dict[str, Any]]]:
+        try:
+            from src.applications.tracker import ApplicationTracker
+
+            tracker = ApplicationTracker(self.db)
+            return tracker.latest_status_by_job(), tracker.global_snapshot(limit=500)
+        except Exception:  # noqa: BLE001
+            return {}, []
+
     # ------------------------------------------------------------- helpers
     async def _fetch_pages(self, http: SafeHttpClient, raws: list[RawDiscovery], limit: int,
                            cancelled: asyncio.Event) -> int:
@@ -176,7 +185,8 @@ class Orchestrator:
         return jobs
 
     # ----------------------------------------------------------------- main
-    async def run(self, profile: CandidateProfile, config: SearchConfig, *, profile_id: int | None = None) -> RunResult:
+    async def run(self, profile: CandidateProfile, config: SearchConfig, *, profile_id: int | None = None,
+                  use_ai: bool | None = None) -> RunResult:
         st = self.state
         started = utc_now()
         session_id = f"{folder_timestamp(started, self.settings.timezone)}-{uuid.uuid4().hex[:6]}"
@@ -188,164 +198,190 @@ class Orchestrator:
         http = build_http(self.settings, transport=self._transport, resolver=self._resolver)
         ai_http = build_http(self.settings, transport=self._ai_transport or self._transport, resolver=self._resolver,
                              timeout=float(self.settings.get("ai.request_timeout_seconds", 90)))
-        ai = AIManager.from_settings(self.settings, ai_http)
+        if use_ai is False:
+            ai = AIManager(None, disabled_reason="AI disabled for this run (--no-ai or consent declined)")
+        else:
+            ai = AIManager.from_settings(self.settings, ai_http)
         search = SearchService.from_settings(self.settings, http)
         st.set("CV analysis", COMPLETED, profile.analysis_method)
         manager: DiscoveryManager | None = None
         ctx: DiscoveryContext | None = None
+        plan: Any = None
         try:
-            # ---- 2. query generation
-            st.set("Search query generation", RUNNING)
-            plan = QueryGenerator(self.settings).generate(profile, config)
-            plan_info = describe_plan(plan)
-            st.set("Search query generation", COMPLETED,
-                   f"{sum(plan_info['per_category'].values())} search queries planned, keywords: "
-                   f"{', '.join(plan.keywords[:5])}")
-
-            # ---- 3. discovery
-            st.set("Multi-source discovery", RUNNING)
-            prefilter = Prefilter(self.settings, profile, config)
-            ctx = DiscoveryContext(settings=self.settings, http=http, profile=profile, config=config, plan=plan,
-                                   prefilter=prefilter, search=search, on_event=st.on_event)
-            manager = DiscoveryManager(SourceRegistry(self.settings))
-
-            async def persist(src: Any, items: list[RawDiscovery]) -> None:
-                collected.extend(items)
-                st.add_results(len(items))
-                try:
-                    self.repo.save_raw(session_id, items)
-                except Exception as exc:  # noqa: BLE001
-                    errors.append(f"Could not persist partial results: {exc}")
-
             try:
-                await manager.run(ctx, on_results=persist)
-                st.set("Multi-source discovery", COMPLETED, f"{len(collected)} results")
-            except asyncio.CancelledError:
-                interrupted = True
-                ctx.cancelled.set()
-                task = asyncio.current_task()
-                if task is not None:
-                    task.uncancel()
-                st.set("Multi-source discovery", INTERRUPTED, f"{len(collected)} results kept")
+                # ---- 2. query generation
+                st.set("Search query generation", RUNNING)
+                plan = QueryGenerator(self.settings).generate(profile, config)
+                plan_info = describe_plan(plan)
+                st.set("Search query generation", COMPLETED,
+                       f"{sum(plan_info['per_category'].values())} search queries planned, keywords: "
+                       f"{', '.join(plan.keywords[:5])}")
 
-            # ---- 4. extraction
-            st.set("Information extraction", RUNNING)
-            fetched = 0
-            history = SearchHistory(self.repo)
-            previous: list[JobOpportunity] = []
-            if not interrupted:
+                # ---- 3. discovery
+                st.set("Multi-source discovery", RUNNING)
+                prefilter = Prefilter(self.settings, profile, config)
+                ctx = DiscoveryContext(settings=self.settings, http=http, profile=profile, config=config, plan=plan,
+                                       prefilter=prefilter, search=search, on_event=st.on_event)
+                manager = DiscoveryManager(SourceRegistry(self.settings))
+
+                async def persist(src: Any, items: list[RawDiscovery]) -> None:
+                    collected.extend(items)
+                    st.add_results(len(items))
+                    try:
+                        self.repo.save_raw(session_id, items)
+                    except Exception as exc:  # noqa: BLE001
+                        errors.append(f"Could not persist partial results: {exc}")
+
                 try:
-                    if self.settings.get("extraction.fetch_pages_for_verification", True):
-                        fetched = await self._fetch_pages(http, collected,
-                                                          int(self.settings.get("budget.max_pages_to_fetch", 60)),
-                                                          ctx.cancelled)
-                    st.ai_calls = ai.calls
-                    await ai_extract(collected, ai, int(self.settings.get("ai.extraction_batch_size", 8)))
-                    st.ai_calls = ai.calls
+                    await manager.run(ctx, on_results=persist)
+                    st.set("Multi-source discovery", COMPLETED, f"{len(collected)} results")
                 except asyncio.CancelledError:
                     interrupted = True
                     ctx.cancelled.set()
                     task = asyncio.current_task()
                     if task is not None:
                         task.uncancel()
-            jobs = self._normalise(collected)
-            if config.include_previous_jobs and not interrupted:
-                previous = history.previous_jobs(session_id)
-                known = {j.job_id for j in jobs}
-                previous = [p for p in previous if p.job_id not in known][:100]
-                await self._recheck_previous(http, previous, ctx.cancelled)
-                jobs.extend(previous)
-            unique, merged = deduplicate(jobs)
-            st.unique_opportunities = len(unique)
-            st.set("Information extraction", INTERRUPTED if interrupted else COMPLETED,
-                   f"{fetched} pages checked, {len(unique)} unique ({merged} duplicates merged)")
+                    st.set("Multi-source discovery", INTERRUPTED, f"{len(collected)} results kept")
 
-            # ---- 5. verification
-            st.set("Verification", RUNNING)
-            verifier = Verifier(self.settings)
-            for j in unique:
-                if j.from_history:
-                    j.listed_in_live_feed = False
-                verifier.apply(j)
-            st.set("Verification", COMPLETED)
+                # ---- 4. extraction
+                st.set("Information extraction", RUNNING)
+                fetched = 0
+                history = SearchHistory(self.repo)
+                previous: list[JobOpportunity] = []
+                if not interrupted:
+                    try:
+                        if self.settings.get("extraction.fetch_pages_for_verification", True):
+                            fetched = await self._fetch_pages(http, collected,
+                                                              int(self.settings.get("budget.max_pages_to_fetch", 60)),
+                                                              ctx.cancelled)
+                        st.ai_calls = ai.calls
+                        from src.extraction.content_parser import SkillDetector
 
-            # ---- 6. matching
-            st.set("Job matching", RUNNING)
-            matcher = Matcher(self.settings, profile, config, plan.preferences)
-            for j in unique:
-                matcher.apply(j)
-            if not interrupted:
+                        await ai_extract(collected, ai, int(self.settings.get("ai.extraction_batch_size", 8)),
+                                         detector=SkillDetector(self.settings.taxonomy))
+                        st.ai_calls = ai.calls
+                    except asyncio.CancelledError:
+                        interrupted = True
+                        ctx.cancelled.set()
+                        task = asyncio.current_task()
+                        if task is not None:
+                            task.uncancel()
+                jobs = self._normalise(collected)
+                if config.include_previous_jobs and not interrupted:
+                    previous = history.previous_jobs(session_id)
+                    known = {j.job_id for j in jobs}
+                    previous = [p for p in previous if p.job_id not in known][:100]
+                    await self._recheck_previous(http, previous, ctx.cancelled)
+                    jobs.extend(previous)
+                unique, merged = deduplicate(jobs)
+                st.unique_opportunities = len(unique)
+                st.set("Information extraction", INTERRUPTED if interrupted else COMPLETED,
+                       f"{fetched} pages checked, {len(unique)} unique ({merged} duplicates merged)")
+
+                # ---- 5. verification
+                st.set("Verification", RUNNING)
+                verifier = Verifier(self.settings)
+                for j in unique:
+                    if j.from_history:
+                        j.listed_in_live_feed = False
+                    verifier.apply(j)
+                st.set("Verification", COMPLETED)
+
+                # ---- 6. matching
+                st.set("Job matching", RUNNING)
+                matcher = Matcher(self.settings, profile, config, plan.preferences)
+                for j in unique:
+                    matcher.apply(j)
+                if not interrupted:
+                    try:
+                        await ai_rerank(unique, matcher, ai, profile, config, self.settings)
+                    except asyncio.CancelledError:
+                        interrupted = True
+                        task = asyncio.current_task()
+                        if task is not None:
+                            task.uncancel()
+                for j in unique:  # freshness can mark stale postings
+                    if j.signals.get("stale") and "Posting is older than 60 days." not in j.warnings:
+                        j.warnings.append("Posting is older than 60 days.")
+                st.ai_calls = ai.calls
+                st.set("Job matching", COMPLETED, f"AI: {ai.status_line()}")
+
+                # ---- persistence
+                new_count = history.mark_new([j for j in unique if not j.from_history])
                 try:
-                    await ai_rerank(unique, matcher, ai, profile, config, self.settings)
-                except asyncio.CancelledError:
-                    interrupted = True
-                    task = asyncio.current_task()
-                    if task is not None:
-                        task.uncancel()
-            for j in unique:  # freshness can mark stale postings
-                if j.signals.get("stale") and "Posting is older than 60 days." not in j.warnings:
-                    j.warnings.append("Posting is older than 60 days.")
-            st.ai_calls = ai.calls
-            st.set("Job matching", COMPLETED, f"AI: {ai.status_line()}")
+                    self.repo.save_opportunities(session_id, unique)
+                except Exception as exc:  # noqa: BLE001
+                    errors.append(f"Could not save opportunities to history: {exc}")
+            except Exception as exc:  # noqa: BLE001 - keep whatever we have and still report
+                log_event(log, 40, "pipeline.error", error=repr(exc))
+                errors.append(f"Pipeline error: {type(exc).__name__}: {exc}")
+                for stage, status in st.stages.items():
+                    if status == RUNNING:
+                        st.set(stage, FAILED, str(exc)[:120])
+                jobs = self._normalise(collected)
+                unique, merged = deduplicate(jobs)
+                try:
+                    verifier = Verifier(self.settings)
+                    matcher = Matcher(self.settings, profile, config, plan.preferences if plan else None)
+                    for j in unique:
+                        verifier.apply(j)
+                        matcher.apply(j)
+                except Exception:  # noqa: BLE001
+                    pass
+                new_count = 0
 
-            # ---- persistence
-            new_count = history.mark_new([j for j in unique if not j.from_history])
+            # ---- 7. reports (always attempted)
+            completed = utc_now()
+            reports = list(manager.reports.values()) if manager else []
+            queries = ctx.executed if ctx else []
+            status = "interrupted" if interrupted else ("completed_with_errors" if errors else "completed")
+            app_statuses, app_rows = self._application_snapshot()
+            data = ReportData(
+                session_id=session_id, started_at=started, completed_at=completed, timezone=self.settings.timezone,
+                status="completed" if status == "completed" else status, profile=profile, config=config, jobs=unique,
+                total_discoveries=len(collected), duplicates_merged=merged, source_reports=reports, queries=queries,
+                ai_status=ai.status_line(), search_providers=search.provider_names if search else [],
+                limitations=build_limitations(self.settings, search, ai, interrupted),
+                errors=errors + ai.errors + (search.errors if search else []),
+                home_country=str(self.settings.get("candidate.home_country", "Indonesia")),
+                new_jobs=new_count, countries_searched=config.all_countries(self.settings.get("search.worldwide_countries", []))
+                if config.include_worldwide else list(config.countries),
+                application_statuses=app_statuses,
+                applications=app_rows,
+            )
+            if config.include_worldwide:
+                data.countries_searched = list(dict.fromkeys(data.countries_searched + ["Remote / worldwide"]))
             try:
-                self.repo.save_opportunities(session_id, unique)
+                self.repo.save_queries(session_id, queries)
+                self.repo.save_source_runs(session_id, reports)
             except Exception as exc:  # noqa: BLE001
-                errors.append(f"Could not save opportunities to history: {exc}")
-        except Exception as exc:  # noqa: BLE001 - keep whatever we have and still report
-            log_event(log, 40, "pipeline.error", error=repr(exc))
-            errors.append(f"Pipeline error: {type(exc).__name__}: {exc}")
-            for stage, status in st.stages.items():
-                if status == RUNNING:
-                    st.set(stage, FAILED, str(exc)[:120])
-            jobs = self._normalise(collected)
-            unique, merged = deduplicate(jobs)
-            new_count = 0
-            plan = None  # type: ignore[assignment]
+                errors.append(f"Could not save run metadata: {exc}")
+            result = RunResult(session_id=session_id, status=status, report_dir=None, data=data, errors=errors)
+            st.set("Report generation", RUNNING)
+            try:
+                report_dir, files = self.write_reports(data, collected)
+                result.report_dir, result.report_files = report_dir, files
+                st.set("Report generation", COMPLETED, str(report_dir))
+            except Exception as exc:  # noqa: BLE001
+                errors.append(f"Report generation failed: {exc}")
+                st.set("Report generation", FAILED, str(exc)[:120])
+            self.repo.finish_session(session_id, status, data.summary_counts(),
+                                     str(result.report_dir) if result.report_dir else None)
+            for stage, s in st.stages.items():
+                if s == "WAITING":
+                    st.set(stage, SKIPPED)
+            log_event(log, 20, "session.end", session=session_id, status=status, unique=len(unique))
+            return result
+        finally:
+            await http.aclose()
+            await ai_http.aclose()
+            if self.settings.get("extraction.use_browser_rendering", False):
+                try:
+                    from src.extraction.browser_extractor import BrowserRenderer
 
-        # ---- 7. reports (always attempted)
-        completed = utc_now()
-        reports = list(manager.reports.values()) if manager else []
-        queries = ctx.executed if ctx else []
-        status = "interrupted" if interrupted else ("completed_with_errors" if errors else "completed")
-        data = ReportData(
-            session_id=session_id, started_at=started, completed_at=completed, timezone=self.settings.timezone,
-            status="completed" if status == "completed" else status, profile=profile, config=config, jobs=unique,
-            total_discoveries=len(collected), duplicates_merged=merged, source_reports=reports, queries=queries,
-            ai_status=ai.status_line(), search_providers=search.provider_names if search else [],
-            limitations=build_limitations(self.settings, search, ai, interrupted),
-            errors=errors + ai.errors + (search.errors if search else []),
-            home_country=str(self.settings.get("candidate.home_country", "Indonesia")),
-            new_jobs=new_count, countries_searched=config.all_countries(self.settings.get("search.worldwide_countries", []))
-            if config.include_worldwide else list(config.countries),
-        )
-        if config.include_worldwide:
-            data.countries_searched = list(dict.fromkeys(data.countries_searched + ["Remote / worldwide"]))
-        try:
-            self.repo.save_queries(session_id, queries)
-            self.repo.save_source_runs(session_id, reports)
-        except Exception as exc:  # noqa: BLE001
-            errors.append(f"Could not save run metadata: {exc}")
-        result = RunResult(session_id=session_id, status=status, report_dir=None, data=data, errors=errors)
-        st.set("Report generation", RUNNING)
-        try:
-            report_dir, files = self.write_reports(data, collected)
-            result.report_dir, result.report_files = report_dir, files
-            st.set("Report generation", COMPLETED, str(report_dir))
-        except Exception as exc:  # noqa: BLE001
-            errors.append(f"Report generation failed: {exc}")
-            st.set("Report generation", FAILED, str(exc)[:120])
-        self.repo.finish_session(session_id, status, data.summary_counts(),
-                                 str(result.report_dir) if result.report_dir else None)
-        for stage, s in st.stages.items():
-            if s == "WAITING":
-                st.set(stage, SKIPPED)
-        await http.aclose()
-        await ai_http.aclose()
-        log_event(log, 20, "session.end", session=session_id, status=status, unique=len(unique))
-        return result
+                    await BrowserRenderer.shared().aclose()
+                except Exception:  # noqa: BLE001
+                    pass
 
     async def _recheck_previous(self, http: SafeHttpClient, jobs: list[JobOpportunity], cancelled: asyncio.Event) -> None:
         limit = min(len(jobs), 30)
@@ -420,6 +456,7 @@ class Orchestrator:
         from src.utils.date_time import from_iso
 
         started = from_iso(sess["started_at"]) or utc_now()
+        app_statuses, app_rows = self._application_snapshot()
         data = ReportData(
             session_id=session_id, started_at=started, completed_at=from_iso(sess.get("completed_at")) or started,
             timezone=self.settings.timezone, status=sess["status"], profile=profile or CandidateProfile(),
@@ -430,6 +467,8 @@ class Orchestrator:
             ai_status="(regenerated from stored results)", new_jobs=int(stats.get("new_since_previous_searches", 0)),
             limitations=["Report regenerated from stored results; no new searches were performed."],
             countries_searched=SearchConfig.from_dict(json.loads(sess["config_json"])).countries,
+            application_statuses=app_statuses,
+            applications=app_rows,
         )
         out_dir = self.settings.reports_directory / f"{folder_timestamp(started, data.timezone)}_regenerated_{datetime.now().strftime('%H%M%S')}"
         return self.write_reports(data, None, out_dir)

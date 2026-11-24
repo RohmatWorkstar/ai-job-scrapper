@@ -229,7 +229,7 @@ def test_send_lock_claimed_only_once(tmp_path: Path, tracker: ApplicationTracker
 
 def test_schema_version_is_2(db: Database) -> None:
     row = db.conn.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()
-    assert row["value"] == "2"
+    assert row["value"] == "3"
 
 
 # ------------------------------------------------------------ sending limits

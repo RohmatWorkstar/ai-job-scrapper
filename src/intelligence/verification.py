@@ -47,8 +47,10 @@ class Verifier:
                 if not NEGATION_RE.search(text[max(0, idx - 50): idx]):
                     hits.append(s)
                     break
-        if any(m in text for m in FREE_MAIL) and re.search(r"\b(registration|training|admin(?:istration)?) fee\b|biaya", text) \
-                and not NEGATION_RE.search(text):
+        if any(m in text for m in FREE_MAIL) and re.search(
+                r"\b(?:registration|training|admin(?:istration)?)\s+fee\b|"
+                r"\bbiaya\s+(?:pendaftaran|administrasi|pelatihan|tes|test|interview|seragam|materai|jaminan|tiket|akomodasi|deposit)\b",
+                text) and not NEGATION_RE.search(text):
             hits.append("free-mail contact combined with payment wording")
         return hits
 

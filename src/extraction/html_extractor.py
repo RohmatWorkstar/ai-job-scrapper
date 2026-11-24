@@ -86,7 +86,7 @@ def _iter_ld_objects(data: Any):
 def parse_job_posting_ld(obj: dict[str, Any]) -> JobPostingLD:
     jp = JobPostingLD()
     jp.title = clean_text(html_lib.unescape(str(obj.get("title") or obj.get("name") or "")), 200)
-    jp.description = html_to_text(str(obj.get("description") or ""), 8000)
+    jp.description = html_to_text(str(obj.get("description") or ""), 40000)
     jp.date_posted = parse_datetime(obj.get("datePosted"))
     vt = obj.get("validThrough")
     if vt:
@@ -257,7 +257,7 @@ def extract_from_html(html: str, url: str, closed_indicators: list[str] | None =
         href = str(a["href"]).strip()
         if href.lower().startswith("mailto:") and href not in page.mailto_links and len(page.mailto_links) < 10:
             page.mailto_links.append(href)
-    page.text = clean_text(soup.get_text("\n"), 12000)
+    page.text = clean_text(soup.get_text("\n"), 40000)
     if not page.published_hint:
         t = soup.find("time", attrs={"datetime": True})
         dt = parse_datetime(t.get("datetime")) if t else None

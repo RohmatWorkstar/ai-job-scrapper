@@ -28,6 +28,9 @@ from src.utils.date_time import parse_datetime, utc_now
 
 PLATFORM_SHARE = {"greenhouse": 0.4, "ashby": 0.25, "lever": 0.2, "smartrecruiters": 0.15}
 API_MAX_BYTES = 40_000_000  # JSON only; never binary files
+SEA_PRIORITY_TOKENS = {
+    "xendit", "flip", "kargo", "agoda", "wise", "ninjavan", "airwallex", "grab", "canva", "deliveryhero", "binance",
+}
 
 
 class AtsSource(BaseJobSource):
@@ -50,6 +53,10 @@ class AtsSource(BaseJobSource):
     def boards(self, ctx: DiscoveryContext) -> tuple[list[str], int]:
         raw = (ctx.settings.profiles.get("ats_seed_boards") or {}).get(self.platform, []) or []
         seeds = [str(e["token"]) if isinstance(e, dict) else str(e) for e in raw if e]
+        if ctx.config.wants_indonesia:
+            sea = [b for b in seeds if b.lower() in SEA_PRIORITY_TOKENS]
+            rest = [b for b in seeds if b.lower() not in SEA_PRIORITY_TOKENS]
+            seeds = sea + rest
         discovered = sorted(ctx.ats_tokens.get(self.platform, set()))
         limit = max(2, int(int(ctx.settings.get("budget.max_ats_boards", 40)) * PLATFORM_SHARE.get(self.platform, 0.2)))
         ordered: list[str] = []
@@ -162,7 +169,7 @@ class GreenhouseSource(AtsSource):
         async def detail(d: RawDiscovery) -> None:
             try:
                 j = await self._get_json(f"https://boards-api.greenhouse.io/v1/boards/{token}/jobs/{d.raw['gh_id']}", ctx)
-                d.text = html_to_text(j.get("content"), 6000)
+                d.text = html_to_text(j.get("content"), 40000)
             except Exception as exc:  # noqa: BLE001 - description is optional
                 d.raw["detail_error"] = str(exc)
 
@@ -271,7 +278,7 @@ class SmartRecruitersSource(AtsSource):
                 sections = ((j.get("jobAd") or {}).get("sections")) or {}
                 parts = [html_to_text((sections.get(k) or {}).get("text")) for k in
                          ("jobDescription", "qualifications", "additionalInformation")]
-                d.text = "\n\n".join(p for p in parts if p)[:6000]
+                d.text = "\n\n".join(p for p in parts if p)[:40000]
                 if j.get("applyUrl"):
                     d.application_url = j["applyUrl"]
             except Exception as exc:  # noqa: BLE001

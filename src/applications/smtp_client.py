@@ -122,6 +122,16 @@ class SmtpClient:
                 log_event(log, 20, "smtp.sent", attempt=attempt)
                 return
             except smtplib.SMTPRecipientsRefused as exc:
+                classified: list[GmailError] = []
+                for code, raw_msg in exc.recipients.values():
+                    text_msg = raw_msg.decode("utf-8", "replace") if isinstance(raw_msg, bytes) else str(raw_msg)
+                    classified.append(classify_smtp(code, text_msg))
+                # Escalate account-level quota/policy/auth errors before falling back to invalid_recipient.
+                for cls in (GmailAuthError, GmailSendingLimitError, GmailPolicyError, GmailQuotaError):
+                    hit = next((e for e in classified if isinstance(e, cls)), None)
+                    if hit is not None:
+                        log_event(log, 30, "smtp.error", kind=hit.kind, status=hit.status)
+                        raise hit from exc
                 codes = [c for c, _ in exc.recipients.values()]
                 raise GmailRequestError(f"Gmail SMTP refused the recipient (codes {codes}) (invalid recipient)",
                                         status=codes[0] if codes else None, reason="invalid_recipient") from exc

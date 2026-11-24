@@ -54,6 +54,10 @@ def _strip_seniority_prefix(title: str) -> str:
     return re.sub(r"(?i)^(senior|sr\.?|lead|principal|staff|head of)\s+", "", title).strip()
 
 
+def _as_list(val: Any) -> list[Any]:
+    return val if isinstance(val, list) else []
+
+
 def merge_ai_profile(base: CandidateProfile, ai: dict[str, Any], cv_text: str, detector: SkillDetector) -> CandidateProfile:
     text_lower = _norm(cv_text)
     p = CandidateProfile.from_dict(base.to_dict())
@@ -61,14 +65,23 @@ def merge_ai_profile(base: CandidateProfile, ai: dict[str, Any], cv_text: str, d
 
     # ---- skills
     proven = {s.lower() for s in p.skills}
-    for item in ai.get("skills") or []:
+    detected_in_cv = {s.lower() for s in detector.detect_names(cv_text)}
+    for item in _as_list(ai.get("skills")):
         if not isinstance(item, dict) or not item.get("name"):
             continue
         name = str(item["name"]).strip()[:60]
         canonical = detector.canonical(name) or name
         quote = str(item.get("evidence") or "")
-        supported = appears_in(text_lower, name) or (quote and appears_in(text_lower, quote[:80]) and
-                                                     (appears_in(quote.lower(), name) or detector.canonical(name)))
+        quote_hits = {s.lower() for s in detector.detect_names(quote)} if quote else set()
+        supported = (
+            appears_in(text_lower, name)
+            or canonical.lower() in detected_in_cv
+            or (
+                bool(quote)
+                and appears_in(text_lower, quote[:80])
+                and (appears_in(quote.lower(), name) or canonical.lower() in quote_hits)
+            )
+        )
         if canonical.lower() in proven:
             continue
         if supported:
@@ -80,24 +93,24 @@ def merge_ai_profile(base: CandidateProfile, ai: dict[str, Any], cv_text: str, d
                 p.skill_evidence[canonical] = quote[:160]
         elif canonical.lower() not in {t.lower() for t in p.transferable_skills}:
             p.transferable_skills.append(canonical)
-    for item in ai.get("transferable_skills") or []:
+    for item in _as_list(ai.get("transferable_skills")):
         name = str(item.get("name") if isinstance(item, dict) else item).strip()[:60]
         if name and name.lower() not in proven and name.lower() not in {t.lower() for t in p.transferable_skills}:
             p.transferable_skills.append(name)
 
     # ---- soft skills / industries / experience areas (must be evidenced)
-    p.soft_skills = [s for s in (ai.get("soft_skills") or []) if isinstance(s, str) and appears_in(text_lower, s)][:10]
-    for ind in ai.get("industry_experience") or []:
+    p.soft_skills = [s for s in _as_list(ai.get("soft_skills")) if isinstance(s, str) and appears_in(text_lower, s)][:10]
+    for ind in _as_list(ai.get("industry_experience")):
         if isinstance(ind, str) and token_overlap(text_lower, ind) >= 0.6 and ind.lower() not in {i.lower() for i in p.industry_experience}:
             p.industry_experience.append(ind)
-    for area in ai.get("experience_areas") or []:
+    for area in _as_list(ai.get("experience_areas")):
         if isinstance(area, str) and area not in p.experience_areas:
             p.experience_areas.append(area)
 
     # ---- factual lists validated against CV wording
     def validated(key: str, threshold: float, limit: int) -> list[str]:
         out = []
-        for v in ai.get(key) or []:
+        for v in _as_list(ai.get(key)):
             if isinstance(v, str) and v.strip() and token_overlap(text_lower, v) >= threshold:
                 out.append(v.strip()[:200])
         return out[:limit]
@@ -106,10 +119,10 @@ def merge_ai_profile(base: CandidateProfile, ai: dict[str, Any], cv_text: str, d
         vals = validated(key, thr, lim)
         if vals:
             setattr(p, key, vals)
-    rejected_certs = [c for c in ai.get("certifications") or [] if isinstance(c, str) and token_overlap(text_lower, c) < 0.6]
+    rejected_certs = [c for c in _as_list(ai.get("certifications")) if isinstance(c, str) and token_overlap(text_lower, c) < 0.6]
     if rejected_certs:
         p.notes.append(f"{len(rejected_certs)} AI-suggested certification(s) ignored: not found in the CV text.")
-    langs = [l for l in ai.get("languages") or [] if isinstance(l, str) and token_overlap(text_lower, l) >= 0.5]
+    langs = [l for l in _as_list(ai.get("languages")) if isinstance(l, str) and token_overlap(text_lower, l) >= 0.5]
     if langs:
         p.languages = list(dict.fromkeys(p.languages + langs))
 
@@ -127,7 +140,7 @@ def merge_ai_profile(base: CandidateProfile, ai: dict[str, Any], cv_text: str, d
     # ---- positions
     allow_senior = p.seniority_estimate in {"senior", "lead"}
     direct, adjacent = list(p.target_positions), list(p.adjacent_positions)
-    for item in ai.get("target_positions") or []:
+    for item in _as_list(ai.get("target_positions")):
         title = str(item.get("title") if isinstance(item, dict) else item).strip()[:80]
         if not title:
             continue
@@ -160,7 +173,15 @@ class ProfileBuilder:
             if self.ai is not None and not self.ai.available:
                 profile.notes.append(f"AI analysis not used: {self.ai.disabled_reason}.")
             return profile
-        prompt = cv_analysis_prompt(redact_personal(cv.text[:30000]), profile.skills)
+        from src.cv.document import extract_identity
+
+        ident = extract_identity(cv.text, profile, getattr(cv, "links", None))
+        extra_names = [ident.name] if ident.name else None
+        extra_domains = [l.split("/", 1)[0] for l in ident.links if l and "." in l]
+        prompt = cv_analysis_prompt(
+            redact_personal(cv.text[:30000], extra_names=extra_names, extra_domains=extra_domains),
+            profile.skills,
+        )
         result = await self.ai.ask_json("cv_analysis", prompt, cache_days=30)
         if not isinstance(result, dict):
             profile.notes.append("AI analysis unavailable for this run; deterministic profile used.")

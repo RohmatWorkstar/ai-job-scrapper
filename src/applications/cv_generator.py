@@ -139,7 +139,8 @@ class CVGenerator:
                           certifications=list(doc.certifications), languages=list(doc.languages), changes=changes,
                           skill_groups=groups, project_entries=project_entries)
 
-    async def tailor(self, doc: CVDocument, analysis: JobAnalysis, match: MatchReport) -> TailoredCV:
+    async def tailor(self, doc: CVDocument, analysis: JobAnalysis, match: MatchReport, *,
+                     experience_years: float | None = None) -> TailoredCV:
         tcv = self.tailor_deterministic(doc, analysis, match)
         if not self.rewrite or self.ai is None or not self.ai.available:
             if self.ai is not None and not self.ai.available:
@@ -156,7 +157,12 @@ class CVGenerator:
         # summary
         summary = str(result.get("summary") or "").strip()
         if summary:
-            allowed_nums = {f"{self._years(doc)}"} if self._years(doc) else set()
+            allowed_nums: set[str] = set()
+            if self._years(doc):
+                allowed_nums.add(str(self._years(doc)))
+            if experience_years is not None and experience_years > 0:
+                allowed_nums.add(str(int(experience_years)))
+                allowed_nums.add(f"{experience_years:g}")
             problems = check_free_text(summary, cv_text, self.detector, allowed_numbers=allowed_nums, min_overlap=0.45)
             if problems or len(summary) > 700:
                 tcv.rejected_rewrites.append({"item": "summary", "text": summary[:300],
@@ -164,15 +170,28 @@ class CVGenerator:
             else:
                 tcv.summary = summary
                 tcv.changes.append("Summary rephrased for this job (validated against the CV).")
-        # skills order (reorder only)
-        order = [str(s) for s in result.get("skills_order") or [] if isinstance(s, str)]
-        lookup = {s.lower(): s for s in tcv.skills}
-        reordered = [lookup[s.lower()] for s in order if s.lower() in lookup]
-        if reordered:
-            tcv.skills = list(dict.fromkeys(reordered + tcv.skills))
-            rank = {s.lower(): i for i, s in enumerate(reordered)}
-            tcv.skill_groups = [(label, sorted(items, key=lambda x: rank.get(x.lower(), len(rank))))
-                                for label, items in tcv.skill_groups]
+        # skills order (reorder only, matching exact/canonical/substring names)
+        order = [str(s).strip() for s in result.get("skills_order") or [] if isinstance(s, str) and s.strip()]
+        if order:
+            def _order_rank(skill_item: str) -> int:
+                low = skill_item.lower()
+                canon_item = (self.detector.canonical(skill_item) or "").lower()
+                for idx, target in enumerate(order):
+                    tlow = target.lower()
+                    tcanon = (self.detector.canonical(target) or "").lower()
+                    if low == tlow or (canon_item and tcanon and canon_item == tcanon) or tlow in low or low in tlow:
+                        return idx
+                return len(order) + 1
+
+            ranked_skills = sorted(tcv.skills, key=_order_rank)
+            if ranked_skills != tcv.skills:
+                tcv.skills = ranked_skills
+            if tcv.skill_groups:
+                tcv.skill_groups = [
+                    (label, sorted(items, key=_order_rank))
+                    for label, items in tcv.skill_groups
+                ]
+                tcv.skill_groups.sort(key=lambda g: min((_order_rank(x) for x in g[1]), default=len(order) + 1))
         # bullets
         sources: dict[str, tuple[int, str]] = {}
         for i, e in enumerate(doc.experience):
@@ -319,9 +338,10 @@ class CVGenerator:
         return path
 
     async def generate(self, doc: CVDocument, analysis: JobAnalysis, match: MatchReport, *, company: str | None,
-                       title: str | None, app_id: str) -> tuple[TailoredCV, Path]:
-        tcv = await self.tailor(doc, analysis, match)
-        final = self.output_path(company, title, app_id)
+                       title: str | None, app_id: str, experience_years: float | None = None,
+                       existing_path: Path | None = None) -> tuple[TailoredCV, Path]:
+        tcv = await self.tailor(doc, analysis, match, experience_years=experience_years)
+        final = Path(existing_path) if existing_path is not None else self.output_path(company, title, app_id)
         # Render and validate a candidate file first: an existing (possibly approved) CV is only
         # replaced by a new one that passed validation.
         candidate = self.render_pdf(tcv, final.with_name(final.stem + ".candidate.pdf"))

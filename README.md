@@ -1,495 +1,293 @@
-# AI Job Intelligence & Discovery System
+# AI Job Intelligence & Application Automation
 
-A local-first Python CLI that reads your CV, builds an evidence-based candidate profile, searches many
-public job sources, verifies what it finds, ranks every opportunity with a transparent explanation, and
-writes a clickable **DOCX** report and **XLSX** workbook.
+Aplikasi CLI lokal berbasis Python untuk mencari lowongan kerja dari banyak sumber publik, menyaring kecocokan dengan CV Anda, membuat laporan **DOCX** dan **XLSX**, serta membantu melamar lewat **Email** maupun **Web/ATS** dengan kontrol penuh di tangan Anda.
 
-It is not a website and not a single-portal scraper. It runs on your machine. It sends data only to the
-APIs you configure, and the CV goes out only with your consent and with contact details removed.
+Semua berjalan di komputer Anda sendiri. CV asli di folder `cv/` tidak pernah diubah, dan data kontak Anda dihapus terlebih dahulu sebelum teks CV dikirim ke AI (itu pun hanya jika Anda mengaktifkan `GEMINI_API_KEY` dan menyetujui consent).
 
-> **Principle:** maximise discovery, preserve evidence, verify facts, never fabricate.
+> **Prinsip utama:** verifikasi fakta, jaga bukti sumber, jangan pernah mengarang pengalaman atau skill.
 
 ---
 
-## Panduan cepat (Bahasa Indonesia)
+## Daftar Isi
 
-Ringkasan cara memakai project ini sehari-hari. Detail teknis ada di bagian berbahasa Inggris di bawah
-dan di [FINAL_DEVELOPMENT_REPORT.md](FINAL_DEVELOPMENT_REPORT.md).
+1. [Instalasi & Setup Awal](#1-instalasi--setup-awal)
+2. [Setup Email Pengirim & Mode Test vs Live](#2-setup-email-pengirim--mode-test-vs-live)
+3. [Penjelasan Semua Mode](#3-penjelasan-semua-mode)
+4. [Cara Pakai Sehari-hari](#4-cara-pakai-sehari-hari)
+5. [Sumber Lowongan & Kualitas Email](#5-sumber-lowongan--kualitas-email)
+6. [Hasil Output & Laporan](#6-hasil-output--laporan)
+7. [Keamanan, Batas Kirim & Tombol Darurat](#7-keamanan-batas-kirim--tombol-darurat)
+8. [Masalah Umum & Solusi](#8-masalah-umum--solusi)
+9. [Struktur Project & Testing](#9-struktur-project--testing)
 
-### A. Setup pertama kali (atau di komputer baru)
+---
+
+## 1. Instalasi & Setup Awal
+
+Butuh **Python 3.11 – 3.13** (disarankan Python 3.12).
+
+### Windows (PowerShell)
 
 ```powershell
-cd "E:\NEW PROJECT 2027\Job-Scrapper"
+# 1. Buat virtual environment dan aktifkan
 py -3.12 -m venv .venv                 # atau: uv venv .venv --python 3.12
 .venv\Scripts\activate
-pip install -r requirements.txt        # tanpa pip: uv pip install --python .venv\Scripts\python.exe -r requirements.txt
-copy .env.example .env                 # lalu isi .env (lihat tabel di bawah)
+
+# 2. Install dependency
+pip install -r requirements.txt
+
+# 3. Buat file konfigurasi rahasia (.env) dari contoh
+copy .env.example .env
 ```
 
-1. Taruh CV di folder `cv\`. **Wajib ada versi PDF**, karena Basic mode melampirkan PDF asli.
-   CV tidak pernah diubah oleh aplikasi.
-2. Isi `.env`. File ini tidak ikut ke git, jadi jangan pernah membagikan isinya.
+*(Untuk Linux/macOS, aktifkan environment dengan `source .venv/bin/activate` dan salin `.env.example` dengan `cp .env.example .env`.)*
 
-   | Variabel | Fungsi | Wajib? |
+### Langkah Wajib Sebelum Jalan
+
+1. **Masukkan CV Anda ke folder `cv/`**  
+   Disarankan format **PDF** berbasis teks (bukan hasil scan gambar). Format DOCX, TXT, dan DOC (butuh LibreOffice/antiword) juga didukung, tetapi Basic mode membutuhkan PDF.
+2. **Isi file `.env`** (file ini di-ignore Git — jangan pernah di-commit atau dibagikan):
+
+   | Variabel di `.env` | Fungsi | Wajib? |
    |---|---|---|
-   | `GMAIL_SENDER_ADDRESS` | Alamat Gmail pengirim | Ya, untuk kirim sungguhan |
-   | `GMAIL_APP_PASSWORD` | App Password Gmail (buat di <https://myaccount.google.com/apppasswords>, butuh 2-Step Verification) | Ya, untuk kirim sungguhan |
-   | `APPLICATION_TEST_RECIPIENT` | **Mode tes:** semua e-mail dibelokkan ke alamat ini, perusahaan tidak menerima apa pun | Isi hanya saat tes |
-   | `SEARCH_API_KEY` | Brave Search, untuk portal Indonesia, komunitas, dan postingan rekruter. **Tanpa ini hampir tidak ada lowongan yang bisa dilamar lewat e-mail.** | Sangat disarankan |
-   | `GEMINI_API_KEY` | AI untuk analisis lowongan dan CV yang disesuaikan per lowongan | Opsional |
-   | `APPLICANT_NAME` / `APPLICANT_PHONE` / `APPLICANT_LINKS` | Menimpa data kontak dari CV | Opsional |
+   | `GMAIL_SENDER_ADDRESS` | Alamat Gmail pengirim (`From`) | Wajib untuk kirim email |
+   | `GMAIL_APP_PASSWORD` | App Password 16 karakter dari [Google App Passwords](https://myaccount.google.com/apppasswords) (butuh 2-Step Verification) | Wajib jika pakai SMTP (paling mudah) |
+   | `APPLICATION_TEST_RECIPIENT` | **Mode tes:** belokkan semua email ke inbox pribadi Anda; perusahaan asli menerima 0 email | Isi saat tes, **kosongkan saat live** |
+   | `SEARCH_API_KEY` | Brave Search API (`SEARCH_PROVIDER=brave`) untuk portal Indonesia, sosial media, dan lowongan email | Sangat disarankan |
+   | `GEMINI_API_KEY` | AI Gemini untuk analisis CV/lowongan, tailoring CV, dan penulisan email bebas ber-fact-check | Opsional (tanpa ini tetap jalan mulus secara deterministik) |
+   | `APPLICANT_NAME`, `APPLICANT_EMAIL`, `APPLICANT_PHONE`, `APPLICANT_LINKS` | Menimpa data kontak/link yang terbaca dari header CV | Opsional |
 
-3. Cek semuanya dengan perintah di bawah. Setiap baris `TODO` menyertakan cara memperbaikinya.
+3. **Cek kesiapan sistem:**
    ```powershell
    python main.py --setup-check
    ```
+   Setiap item yang masih `TODO` akan langsung menampilkan instruksi perbaikannya.
 
-### B. Rutinitas harian
+---
 
-```powershell
-.venv\Scripts\activate
+## 2. Setup Email Pengirim & Mode Test vs Live
 
-# Pintu utama interaktif (Hub): Search, Browse/Filter Jobs, Prepare, Review, Send Queue, Pipeline & Setup
-python main.py
+### A. Mengatur Email Pengirim (`From`)
 
-# Atau jalankan langsung via flag CLI (kompatibel penuh dengan skrip & Task Scheduler):
-python main.py --search                       # langsung mulai pencarian lowongan
-python main.py --apply web                    # Web/ATS Assist: CV PDF tailored + Cover Note + buka URL + tandai Applied
-python main.py --apply ai --channel all       # E-mail untuk job ber-email, otomatis fallback ke Web/ATS Assist
-python main.py --apply basic                  # CV PDF asli + e-mail template (cepat)
-python main.py --apply ai --all-recent 14     # proses lowongan lintas sesi dalam 14 hari terakhir
-python main.py --review                       # review lamaran pending (Email & Web/ATS)
-python main.py --send-queue                   # kirim antrean e-mail yang sudah di-approve
-python main.py --applications                 # riwayat lamaran + funnel pipeline (opsional: --status INTERVIEW)
-python main.py --update-status <ID> interview --note "HR call Senin"
-python main.py --sending-status               # kuota hari ini, jeda, status pause/stop
+Buka file `.env` dan isi:
+
+```env
+GMAIL_SENDER_ADDRESS=nama.profesional@gmail.com
+GMAIL_APP_PASSWORD=xxxx xxxx xxxx xxxx
 ```
 
-Semua lowongan — baik yang lewat **Web/ATS** (Greenhouse, Lever, Ashby, SmartRecruiters, We Work Remotely, Working Nomads) maupun yang lewat **E-mail** — kini bisa memakai **tailored ATS CV PDF**, **cover note**, dan **Application Tracker** hingga tahap *Interview*, *Offer*, *Employer Rejected*, atau *Withdrawn*.
+- **Tips HR:** Gunakan akun Gmail profesional yang **sama** dengan alamat email di CV Anda agar pengirim (`From`), `Reply-To`, dan signature konsisten.
+- **Alternatif OAuth (tanpa App Password):** Kosongkan `GMAIL_APP_PASSWORD`, simpan file OAuth client JSON dari Google Cloud Console ke `data/secrets/gmail_client_secret.json`, lalu jalankan:
+  ```powershell
+  python main.py --gmail-auth
+  ```
+  OAuth hanya meminta izin kirim (`gmail.send`), tidak membuka akses penuh akun Gmail.
 
-### C. Mode tes vs kirim sungguhan
+### B. Menyalakan / Mematikan Mode Email Tester
 
-| Keadaan | `dry_run` di `config/settings.yaml` | `APPLICATION_TEST_RECIPIENT` di `.env` | Hasil |
+Sistem memiliki 3 tingkat keamanan pengiriman yang dikontrol dari `config/settings.yaml` (`applications.sending`) dan `.env`:
+
+| Kondisi | `dry_run` di `config/settings.yaml` | `APPLICATION_TEST_RECIPIENT` di `.env` | Apa yang Terjadi |
 |---|---|---|---|
-| Latihan tanpa internet | `true` | (bebas) | File `.eml` di `data\outbox\`, tidak ada yang terkirim |
-| Tes kirim ke inbox sendiri | `false` | `alamat-tes@gmail.com` | Semua e-mail dikirim ke alamat tes dengan subjek `[TEST for ...]` |
-| **Melamar sungguhan** | `false` | **kosong** | E-mail dikirim ke perusahaan |
+| **Latihan Offline (Dry Run)** | `true` *(default)* | *(bebas)* | Hanya menyimpan file `.eml` ke `data/outbox/`. Gmail tidak dihubungi. |
+| **Tes Kirim ke Inbox Sendiri (ON)** | `false` | `email.test.anda@gmail.com` | Email benar-benar dikirim lewat Gmail, tetapi **100% dibelokkan ke email test Anda**. Perusahaan asli tidak menerima apa pun. |
+| **Kirim Sungguhan ke Perusahaan (OFF)** | `false` | **kosong** *(dan `test_recipient: ""` di `settings.yaml`)* | Email dikirim **langsung ke alamat HR perusahaan**. |
 
-Setelah dry run atau tes, lamaran kembali ke status review. Untuk mengirim sungguhan, approve lagi
-setelah mode diganti.
+**Pengaturan tampilan Subject saat Mode Test:**
+- Di `config/settings.yaml`: `test_tag_subject: false` *(default)* → Subject tampil natural seperti email asli tanpa kata `[TEST]` (alamat tujuan perusahaan asli tetap dicatat di header `X-Original-To`).
+- Ubah ke `test_tag_subject: true` (atau set `APPLICATION_TEST_TAG_SUBJECT=true` di `.env`) jika Anda ingin Subject diberi awalan `[TEST for hr@perusahaan.com]`.
 
-### D. Batas pengiriman (supaya akun Gmail aman)
-
-Setting saat ini (opsi A, ±100 lamaran dalam ±3 hari kerja), di `config/settings.yaml` →
-`applications.sending`:
-
-| Setting | Nilai |
-|---|---|
-| `max_per_day` | 35 |
-| `max_per_hour` | 8 |
-| `min_interval_seconds` | 120 |
-| Jam kirim | 08:00–18:00 WIB, Senin–Jumat |
-| `recipient_cooldown_days` | 30: **satu alamat penerima hanya menerima satu lamaran** dalam 30 hari |
-
-- Naikkan bertahap. Nilai di atas 50 per hari memunculkan peringatan, dan nilai di atas 250 ditolak sistem.
-- Kalau Gmail menolak karena limit, pengiriman otomatis berhenti 24 jam dan tidak dicoba ulang.
-- **Berhenti darurat:** jalankan `python main.py --emergency-stop` (atau buat file `data\STOP_SENDING`).
-  Untuk melanjutkan: `python main.py --resume-sending`.
-
-**Kirim otomatis sepanjang hari** lewat Windows Task Scheduler. Jalankan sekali di PowerShell:
-
-```powershell
-schtasks /Create /TN "JobScrapper-SendQueue" /SC MINUTE /MO 30 /ST 08:00 /ET 18:00 /D MON,TUE,WED,THU,FRI `
-  /TR "cmd /c cd /d \"E:\NEW PROJECT 2027\Job-Scrapper\" && .venv\Scripts\python.exe main.py --send-queue --defaults >> data\logs\send_queue.log 2>&1"
-# hapus: schtasks /Delete /TN "JobScrapper-SendQueue" /F
-```
-
-### E. Masalah umum
-
-| Pesan / gejala | Arti dan solusi |
-|---|---|
-| `0 opportunity(ies) ... by e-mail` / "None of these postings accepts applications by e-mail" | Sumber gratis hanya berisi board ATS yang memakai form web. Tambahkan `SEARCH_API_KEY`, atau lamar lewat link di XLSX. |
-| `Outside the sending window` | Di luar jam 08–18 hari kerja. Tunggu, atau ubah `sending_window`. |
-| `Hourly limit reached` / `Daily limit reached` | Batas kirim tercapai. Sisa antrean dikirim pada `--send-queue` berikutnya. |
-| `Sending paused: ...` | Gmail menolak atau ada beberapa kegagalan beruntun. Baca alasannya, lalu `python main.py --resume-sending`. |
-| `535` / `App Password rejected` | App Password salah atau dicabut. Buat yang baru dan perbarui `.env`. |
-| `LOCKED - delivery unknown` di `--applications` | Koneksi putus saat mengirim. Cek folder *Sent* di Gmail. Kalau **tidak** terkirim: `python main.py --requeue <ID>`. |
-| `already has an application from you` | Alamat itu sudah menerima atau sedang menunggu lamaran dari Anda (aturan satu alamat satu lamaran). |
-| Data di CV terbaca salah | Jalankan `python main.py --apply ai --limit 1 --dry-run` lalu pilih *Open CV PDF*. Pastikan CV memakai heading standar (PROFILE, EXPERIENCE, PROJECTS, SKILLS, EDUCATION). |
-
-### F. File dan folder penting
-
-| Lokasi | Isi |
-|---|---|
-| `cv\` | CV asli (tidak pernah diubah) |
-| `.env` | Credential (rahasia, tidak ikut ke git) |
-| `config\settings.yaml` | Semua setting: filter lowongan (`applications.eligibility`), batas kirim, mode |
-| `config\email_templates.yaml` | Teks e-mail (EN/ID); boleh diedit |
-| `reports\` | Laporan hasil pencarian (DOCX/XLSX) |
-| `data\generated_cvs\` | CV PDF yang disesuaikan per lowongan (AI mode) |
-| `data\outbox\` | E-mail hasil dry run (`.eml`) |
-| `data\database\job_intelligence.sqlite3` | Riwayat lowongan dan lamaran (backup sesekali) |
-| `data\logs\` | Log aplikasi (password dan alamat e-mail disensor) |
+> Setelah Dry Run atau Test Send selesai, status lamaran otomatis kembali ke `PENDING_APPROVAL` agar tetap bisa Anda approve dan kirim sungguhan nanti.
 
 ---
 
-## 1. Quick start (Windows 10/11)
+## 3. Penjelasan Semua Mode
+
+### A. Mode Persiapan Lamaran (`--apply`)
+
+| Mode | Fungsi | Kapan Dipakai |
+|---|---|---|
+| **`basic`** | Melampirkan **CV PDF asli** Anda + email yang disesuaikan dengan posisi target. Cepat dan tidak membuat PDF baru. | Saat CV asli sudah cocok dengan lowongan dan ingin proses cepat. |
+| **`ai`** | Menganalisis JD, menghitung skor kecocokan, membuat **Custom ATS PDF CV** khusus per perusahaan (skill & pengalaman relevan diurutkan ke atas), dan menyusun email khusus role tersebut. | Saat ingin CV dan email tampil paling relevan untuk tiap posisi. |
+| **`web`** | **Web/ATS Assist** untuk lowongan yang melamarnya lewat form website (Greenhouse, Lever, Ashby, WWR, dll.). Menyiapkan Custom CV PDF + *cover note* siap tempel + membuka link lamaran. | Untuk mayoritas lowongan modern yang tidak mencantumkan alamat email. |
+
+### B. Mode Channel (`--channel`)
+
+Digunakan bersama `--apply basic` atau `--apply ai`:
+- `--channel email` *(default)* — hanya memproses lowongan yang memiliki email HR valid.
+- `--channel web` — hanya memproses lowongan via form Web/ATS.
+- `--channel all` — **mode campuran**: lowongan ber-email diproses sebagai Email, sisanya otomatis dibuatkan paket Web/ATS Assist.
+
+### C. Mode Pengiriman (`applications.sending.mode` di `config/settings.yaml`)
+
+- **`manual`** *(default, paling aman)* — setiap lamaran berhenti di `PENDING_APPROVAL`. Tidak ada yang terkirim sebelum Anda review dan approve.
+- **`scheduled`** — mengirim antrean `APPROVED` bertahap mengikuti jam kerja (`sending_window`), kuota per jam/hari, dan jeda antar email.
+- **`automatic`** — auto-approve dan kirim untuk skor ≥ `automatic_min_match_score` (non-freemail). Demi keamanan, mode ini hanya aktif jika **ketiganya** dinyalakan bersamaan: `mode: automatic`, `automatic_enabled: true`, dan flag CLI `--auto`.
+
+---
+
+## 4. Cara Pakai Sehari-hari
+
+### Cara Termudah: Interactive Hub
+
+Cukup jalankan tanpa flag:
 
 ```powershell
-# 1. Create a virtual environment (Python 3.11 - 3.13 recommended)
-py -3.12 -m venv .venv            # or: uv venv .venv --python 3.12
-.venv\Scripts\activate
-
-# 2. Install dependencies
-pip install -r requirements.txt
-
-# 3. (Optional but recommended) add API keys
-copy .env.example .env            # then edit .env
-
-# 4. Put your CV (PDF recommended; DOCX, TXT, or DOC with antiword/LibreOffice) into the cv\ folder
-
-# 5. Run
 python main.py
 ```
 
-Linux/macOS are the same, except you activate the environment with `source .venv/bin/activate`.
+Dari satu menu ini Anda bisa langsung:
+- Melihat badge status aktif (`DRY RUN` / `TEST -> ...` / `LIVE`) dan ringkasan pipeline lamaran.
+- Mencari lowongan baru, menyaring hasil lowongan (by kategori, channel, negara, kata kunci).
+- Menyiapkan lamaran (Basic / AI / Web Assist), review & edit email sebelum approve.
+- Mengirim antrean email, membuka form Web/ATS dan menandai `APPLIED_WEB`, serta update status ke `INTERVIEW` / `OFFER` / `EMPLOYER_REJECTED` / `WITHDRAWN`.
+- Mengecek kesehatan sistem (`setup-check`) dan membuat ulang laporan DOCX/XLSX.
 
-**The app works without any API key.** It then uses deterministic CV analysis and searches only the
-sources that need no credentials (see §4). Add keys to unlock web, portal, social media and community
-search, and AI assistance.
+### Cara Cepat via Command Line (CLI)
 
----
+```powershell
+# 1. Cari lowongan baru (tekan Enter untuk pakai default/preferensi tersimpan)
+python main.py --search
+# Tambah --defaults untuk jalan langsung tanpa pertanyaan, atau --no-ai untuk tanpa Gemini
 
-## 2. What happens when you run `python main.py`
+# 2. Siapkan lamaran (Email + Web/ATS sekaligus)
+python main.py --apply ai --channel all --limit 10
+# Atau ambil dari gabungan seluruh sesi 14 hari terakhir:
+python main.py --apply ai --channel all --all-recent 14
 
-1. **Environment check**: Python version, configuration, CV folder, SQLite database and which keys are set.
-2. **CV selection**: choose from the files in `cv/`. Scanned (image-only) PDFs are detected and explained.
-3. **Consent**: if a Gemini key is set, you are asked before a redacted copy of the CV text is sent.
-   E-mail addresses, phone numbers and links are removed first.
-4. **Candidate profile**: title, experience (computed from employment dates), seniority estimate, skills
-   grouped by type with CV evidence, industries, certifications, languages, suggested and adjacent positions.
-   Skills the AI suggests but the CV does not prove are listed separately as *transferable*.
-5. **Ten questions**: geography, employment type, positions, work arrangement, publication date, salary,
-   seniority, sources, language and free-text preferences. **Press Enter to keep each default.**
-   Your answers are saved; the app asks before it overwrites saved defaults.
-6. **Summary**: choose *Confirm and start*, *Edit configuration* or *Cancel*.
-7. **Live progress**: seven pipeline stages with real counters (queries per category, results, unique
-   opportunities, pages checked, AI calls). **Press Ctrl+C once** to stop early. The partial results are
-   still verified, ranked and written to the reports.
-8. **Reports**: written to `reports/<YYYY-MM-DD_HHMMSS>/` (Asia/Jakarta time).
+# 3. Review, edit teks/CV, dan approve lamaran
+python main.py --review
 
-Example of the closing summary (the counts come from your real run):
+# 4. Kirim antrean email yang sudah di-approve
+python main.py --send-queue
+# Tambah --dry-run kapan saja jika hanya ingin tes ke data/outbox/
 
-```text
-────────────────────────────── SEARCH COMPLETED ──────────────────────────────
-  Total discoveries:                304
-  Unique opportunities:             268
-  Duplicates merged:                 36
-  Highly relevant:                    7
-  Relevant:                         139
-  ...
-Reports generated:
-  [OK] reports\2026-11-22_214834\JOB_SEARCH_REPORT.docx
-  [OK] reports\2026-11-22_214834\JOB_SEARCH_RESULTS.xlsx
-Research completed at: 2026-11-22 21:50
-Timezone: Asia/Jakarta
+# 5. Pantau & update tahap lamaran
+python main.py --applications
+python main.py --applications --status INTERVIEW
+python main.py --update-status <APP_ID> interview --note "User interview Kamis jam 10"
+
+# 6. Utilitas lain
+python main.py --history                      # lihat daftar sesi pencarian
+python main.py --report <SESSION_ID>          # buat ulang laporan DOCX/XLSX offline
+python main.py --check                        # cek config dan koneksi sumber lowongan
+python main.py --sending-status               # cek kuota kirim hari ini & status pause/stop
 ```
 
-### Command-line options
-
-| Option | Purpose |
-|---|---|
-| *(no action flags, interactive)* | Launch the **Interactive Hub** (Search, Browse Jobs, Prepare, Review, Send Queue, Pipeline, Setup/Health) |
-| `--search` | Jump directly into the job search flow without opening the Hub |
-| `--cv FILE` | Use this file from `cv/` and skip the selection prompt |
-| `--defaults` | Non-interactive run: use saved answers (or the defaults) for every question |
-| `--no-ai` | Do not call the AI provider in this run (propagated across CV, extraction, matching and tailoring) |
-| `--ai-consent` | Explicitly opt in to Gemini CV analysis in non-interactive (`--defaults`) mode |
-| `--max-queries N` | Override the paid web-search query budget for this run |
-| `--check` | Check the configuration and test each source, then exit |
-| `--history` | List previous search sessions |
-| `--report SESSION_ID` | Rebuild the DOCX and XLSX for a stored session, offline |
-
 ---
 
-## 3. Configuration
+## 5. Sumber Lowongan & Kualitas Email
 
-### `.env` (credentials, never committed)
+### Sumber Lowongan yang Didukung
 
-| Variable | Needed for |
-|---|---|
-| `GEMINI_API_KEY` | AI CV interpretation, extraction help and semantic matching. Leave `AI_MODEL` empty to auto-select the newest stable Gemini Flash model through the official `models.list` API. |
-| `SEARCH_PROVIDER=brave`, `SEARCH_API_KEY` | Brave Search API, which powers web, job-portal, social-media, community, careers-page and ATS-board discovery. |
-| `SECONDARY_SEARCH_PROVIDER`, `SECONDARY_SEARCH_API_KEY` | A fallback provider used when the first one fails or hits its quota. |
-| `REDDIT_CLIENT_ID`, `REDDIT_CLIENT_SECRET` | The official Reddit API (app-only OAuth). |
-| `X_BEARER_TOKEN` | X API v2 recent search (requires a paid X tier). |
-
-Keys never appear in the terminal, logs or reports. Logs also redact e-mail addresses and phone numbers.
-
-### `config/settings.yaml`
-
-Holds the defaults for every question, the budgets that cap API cost (`budget.*`) and the scoring
-weights and thresholds (`matching.*`). It also holds the scam and closed-listing phrases, the domains that
-are never fetched, concurrency and timeouts, per-host rate limits and cache lifetimes, and the list of
-source connectors.
-
-### `config/search_profiles.yaml`
-
-Holds the hiring phrases (English and Indonesian), the job portals, social and community sites, and the
-role families used for matching. It also lists the **ATS seed boards** (all checked to exist on
-2026-11-22) and your own **company career pages**, plus country aliases. Add target companies here, for
-example `greenhouse: [yourcompany]` or `company_career_pages: [{company: X, url: https://...}]`.
-
-### `config/skills_taxonomy.yaml`
-
-The technology list used to detect skills in CVs and job posts. Extend it freely.
-
----
-
-## 4. Sources and their status
-
-| Source | How it is accessed | Status |
+| Sumber | Butuh API Key? | Catatan |
 |---|---|---|
-| **Greenhouse** company boards | Official Job Board API | ✅ Fully implemented, no key needed |
-| **Lever** company boards | Official Postings API | ✅ Fully implemented, no key needed |
-| **Ashby** company boards | Official Job Posting API | ✅ Fully implemented, no key needed |
-| **SmartRecruiters** company boards | Official Posting API | ✅ Fully implemented, no key needed |
-| ATS board **auto-discovery** | Board names taken from search-result URLs, then crawled through the APIs above | ✅ Implemented, needs a search key |
-| **Remotive, Remote OK, Arbeitnow, Jobicy, Himalayas, Working Nomads, We Work Remotely (RSS)** | Public job APIs & RSS feeds, with attribution kept and responses cached | ✅ Fully implemented, no key needed. Himalayas is often slow, and timeouts are reported. |
-| **Hacker News "Who is hiring?"** | HN Search API (Algolia) with monthly-aware window | ✅ Fully implemented, no key needed |
-| **Web search** (targeted hiring queries) | Brave Search API | 🔑 Implemented, needs `SEARCH_API_KEY` |
-| **Job portals**: LinkedIn Jobs, JobStreet, Indeed, Glints, Kalibrr, Glassdoor, Wellfound, Tech in Asia, Dealls, We Work Remotely | Publicly indexed pages through `site:` search queries | 🔑 Implemented, needs a search key. These portals are not scraped directly. |
-| **Social media**: LinkedIn posts, X, Facebook, Instagram, Threads | Publicly indexed posts through search | 🔑 Implemented, needs a search key. Only public, indexed content is used. |
-| **X API** recent search | Official X API v2 | 🔑 Implemented, needs a paid `X_BEARER_TOKEN` |
-| **Reddit** | Official Reddit API (OAuth) | 🔑 Implemented, needs Reddit app credentials |
-| **Communities**: Reddit, Dev.to, HN, Kaskus | Publicly indexed pages through search | 🔑 Implemented, needs a search key |
-| **Company career pages** | Direct fetch (robots.txt respected). JSON-LD `JobPosting` is extracted, otherwise links matching your roles. | ✅ For pages you list in the config. 🔑 For careers pages found by search. |
-| **Workday** | No documented public API. Postings are only found through search. | ⚠️ Partially supported |
-| **JavaScript-only career pages** | Optional Playwright renderer | ⚠️ Optional. Install with `pip install playwright` and `python -m playwright install chromium`, then set `extraction.use_browser_rendering: true`. |
-| Google Custom Search API | n/a | ❌ Not implemented: closed to new customers and shutting down on 2027-01-01 |
-| Bing Web Search API | n/a | ❌ Not implemented: retired |
-| Private groups, logged-in feeds, CAPTCHA-protected pages | n/a | ❌ Not supported by design |
+| **Greenhouse, Lever, Ashby, SmartRecruiters** | Tidak | API resmi board perusahaan. Jika negara menyertakan Indonesia, board SEA/Indonesia (Xendit, Flip, Kargo, Agoda, Wise, dll.) diprioritaskan lebih dulu. |
+| **Remotive, Remote OK, Arbeitnow, Jobicy, Himalayas, Working Nomads, We Work Remotely (RSS)** | Tidak | Feed lowongan publik (hasil di-cache agar sopan terhadap rate limit). |
+| **Hacker News ("Who is hiring?")** | Tidak | Menggunakan Algolia HN API dengan window bulanan otomatis (diperpanjang ke 35 hari saat filter ≥7 hari agar thread awal bulan tidak kosong di pertengahan/akhir bulan). |
+| **Company Career Pages** | Tidak (untuk daftar di config) | Mengambil JSON-LD `JobPosting` secara sopan (mematuhi `robots.txt`). |
+| **Web Search, Portal (Glints, Kalibrr, JobStreet, Tech in Asia, Dealls, LinkedIn Jobs, dll.), Sosial Media & Komunitas** | Ya (`SEARCH_API_KEY`) | Menggunakan Brave Search (`site:` query publik, tidak pernah scrape halaman login-wall secara langsung). |
+| **Reddit API & X API** | Ya (kredensial resmi masing-masing) | Opsional. |
 
-LinkedIn, Facebook, Instagram, X, Threads, Glassdoor and Indeed pages are **never fetched directly**,
-because they sit behind login walls and their terms forbid it. Results from those sites stay *UNVERIFIED*
-or *NEEDS_REVIEW* until you check them yourself.
+*Untuk halaman karir yang 100% JavaScript, Anda bisa mengaktifkan Playwright secara opsional (`pip install playwright && python -m playwright install chromium`, lalu set `extraction.use_browser_rendering: true` di `config/settings.yaml`).*
+
+### Cara Kerja Penulisan Email Lamaran
+
+- **Disesuaikan per kategori posisi:** Sistem mendeteksi fokus lowongan (`Fullstack`, `Backend`, `Frontend`, `Software Engineer`, atau `AI Integration`) dari judul, skill wajib, dan deskripsi pekerjaan.
+- **Berbasis fakta CV:** Memilih 3–4 skill paling relevan dan 1–2 pencapaian nyata yang paling cocok (mempertahankan angka dampak seperti penghematan biaya atau penurunan bug), tanpa membuang-buang ruang dengan nama perusahaan lama secara otomatis.
+- **Membedakan pengalaman kerja dan proyek:** Pengalaman profesional disebut jelas sebagai pengalaman kerja, sedangkan proyek disebut sebagai proyek.
+- **Bahasa otomatis (`auto`):** Bahasa Inggris profesional untuk lowongan berbahasa Inggris, dan Bahasa Indonesia natural untuk lowongan Indonesia.
+- **Anti-halusinasi:** Saat `GEMINI_API_KEY` aktif, output AI tetap diperiksa oleh `src/applications/fact_check.py`. Jika AI mengarang skill, angka, atau memakai klise berlebihan, sistem otomatis memakai versi deterministik yang terjamin faktual.
+- **Link & kontak rapi:** Signature selalu menampilkan kontak valid dan tautan berlabel (`Portfolio:`, `GitHub:`, `LinkedIn:`).
 
 ---
 
-## 5. How results are processed
+## 6. Hasil Output & Laporan
 
-1. **Query generation** builds queries from your target roles, skills, countries, work arrangement,
-   employment type, language (Indonesian *lowongan* / *loker* phrasing included) and hiring phrases. The
-   paid search budget is split across categories, and the queries rotate across platforms and countries so
-   that a small budget still covers many of them.
-2. **Prefiltering for high-volume boards.** ATS boards can list hundreds of unrelated roles, so the app
-   keeps postings whose titles match your role families or skills. It drops postings whose *known*
-   publication date falls outside your date window. Postings with an unknown date are always kept. Each
-   source reports how many listings it scanned, kept and dropped.
-3. **Extraction.** Pages are fetched within a budget, after SSRF and robots.txt checks. schema.org
-   `JobPosting` JSON-LD, dates, apply links and closing notices are extracted. Optional AI extraction runs
-   on unstructured snippets, and **every value it returns must appear in the source text**, otherwise the
-   value is discarded.
-4. **Normalisation.** Titles, companies, countries, currencies, employment types, work arrangements and
-   dates are normalised. Unknown values stay `null` or `unknown`. The publication date, the social-post
-   date and the discovery time are kept separately.
-5. **Deduplication.** Entries are merged when they share an ATS ID, a canonical URL or an application URL,
-   or when the company matches, the titles are nearly identical, the locations are compatible and the
-   descriptions are similar. Every source link is kept under *Also found at*. Uncertain matches are kept
-   apart and flagged as *possible duplicates*.
-6. **Verification.** Each opportunity gets a status and a written reason:
+Setiap sesi pencarian menyimpan hasil di `reports/<YYYY-MM-DD_HHMMSS>/`:
 
-   | Status | When |
-   |---|---|
-   | `VERIFIED_OPEN` | The posting is in the company's own live ATS listing, or on a company-owned page with structured posting data, no closing notice and an application link |
-   | `LIKELY_OPEN` | It is in a live third-party feed, or on a page with structured data that cannot be fully confirmed |
-   | `UNVERIFIED` | It is known only from a search snippet, or the page did not confirm it |
-   | `NEEDS_REVIEW` | It is a social or community post (company authorisation not confirmed), or it may not be a job |
-   | `CLOSED` | The page says the role is closed, or its `validThrough` date has passed |
-   | `INACCESSIBLE` | The original page returns 404/410 or cannot be reached |
-   | `POSSIBLE_SCAM` | It contains fee or payment warning signs. Anti-fraud disclaimers such as "we never ask for a fee" are ignored. |
-
-   An HTTP 200 response alone never produces `VERIFIED_OPEN`.
-7. **Matching.** Each opportunity gets a 0–100 *estimated relevance indicator*, not a probability of
-   being hired. The default weights, which you can change, are: position 25, skills 25, experience 15,
-   location and work arrangement 15, salary 10, freshness 10. Missing information gives a neutral value
-   and a *To verify* note instead of a zero. Gates stop a high average from hiding a decisive mismatch,
-   such as a remote role limited to another region, the wrong job family or a very different seniority.
-   Results are grouped as HIGHLY RELEVANT, RELEVANT, POTENTIALLY RELEVANT, NEEDS MANUAL REVIEW or NOT
-   RELEVANT. Nothing is dropped silently: NOT RELEVANT items stay in the XLSX and in the DOCX appendix.
-   When AI is enabled, it adds a role-equivalence judgement and a short assessment for the top candidates.
-8. **History.** Each run has its own session ID. Opportunities seen before are marked *seen in earlier
-   searches* but are not hidden. The *Include previous jobs* option re-checks still-open jobs from earlier
-   runs and adds them to the report.
+- **`JOB_SEARCH_REPORT.docx`** — Laporan rapi 9 bagian dengan tautan yang bisa diklik (`mailto:` untuk email, URL untuk Web/ATS) beserta status lamaran.
+- **`JOB_SEARCH_RESULTS.xlsx`** — Workbook lengkap dengan filter & link aktif, mencakup sheet:
+  *Executive Summary*, *All Opportunities* (lengkap dengan kolom `Apply Channel`, `Application Email`, `Application Status`), *Highly Relevant*, *Social Media Findings*, *International Jobs*, *Needs Verification*, ***Application Tracker***, *Source Coverage*, dan *Queries Executed*.
+- **`search_metadata.json`** & **`raw_discovery.json`** — Log query, cakupan sumber, dan data mentah.
+- **`data/generated_cvs/`** — CV PDF ATS-friendly hasil tailoring untuk AI mode / Web Assist.
 
 ---
 
-## 6. Output files
+## 7. Keamanan, Batas Kirim & Tombol Darurat
+
+Pengaturan default di `config/settings.yaml` (`applications.sending`) dirancang agar akun Gmail tetap aman:
+
+| Pengaturan | Default | Arti |
+|---|---|---|
+| `max_per_day` | `35` | Maksimal 35 email per 24 jam (di atas 50 muncul peringatan; di atas 250 ditolak sistem) |
+| `max_per_hour` | `8` | Maksimal 8 email per jam |
+| `min_interval_seconds` | `120` | Jeda minimal 2 menit antar email |
+| `sending_window` | `08:00–18:00` (Senin–Jumat) | Hanya mengirim di jam kerja |
+| `recipient_cooldown_days` | `30` | Satu alamat penerima (termasuk variasi `+tag` Gmail) hanya menerima 1 lamaran dalam 30 hari |
+
+- **Auto-pause:** Jika Gmail mengembalikan error limit/kuota, pengiriman berhenti otomatis selama 24 jam tanpa retry berulang.
+- **Tombol darurat:**
+  ```powershell
+  python main.py --emergency-stop    # hentikan semua pengiriman seketika (atau buat file data\STOP_SENDING)
+  python main.py --resume-sending    # aktifkan kembali setelah masalah selesai
+  ```
+- **Jadwal kirim otomatis di Windows (opsional):**
+  ```powershell
+  schtasks /Create /TN "JobScrapper-SendQueue" /SC MINUTE /MO 30 /ST 08:00 /ET 18:00 /D MON,TUE,WED,THU,FRI `
+    /TR "cmd /c cd /d \"E:\NEW PROJECT 2027\Job-Scrapper\" && .venv\Scripts\python.exe main.py --send-queue --defaults >> data\logs\send_queue.log 2>&1"
+  # Untuk menghapus jadwal:
+  # schtasks /Delete /TN "JobScrapper-SendQueue" /F
+  ```
+- **Perlindungan teknis:** Proteksi SSRF (memblokir IP privat/lokal termasuk tiap redirect), kepatuhan `robots.txt`, pencegahan formula injection di Excel, penyensoran secret & PII di log, serta tidak pernah menembus CAPTCHA/login-wall.
+
+---
+
+## 8. Masalah Umum & Solusi
+
+| Gejala / Pesan | Penyebab & Solusi |
+|---|---|
+| `0 opportunity(ies) ... by e-mail` | Sumber gratis mayoritas memakai form Web/ATS. Gunakan `python main.py --apply web` atau `--apply ai --channel all`, atau tambahkan `SEARCH_API_KEY` di `.env` untuk mencari lowongan email. |
+| `Outside the sending window` | Anda mengirim di luar jam 08:00–18:00 Senin–Jumat. Tunggu jam kerja atau sesuaikan `sending_window` di `config/settings.yaml`. |
+| `Hourly limit reached` / `Daily limit reached` | Batas aman tercapai. Sisa antrean akan terkirim pada `--send-queue` berikutnya. |
+| `535` / `App Password rejected` | `GMAIL_APP_PASSWORD` salah atau sudah dicabut. Buat App Password baru di akun Google dan perbarui `.env`. |
+| `LOCKED - delivery unknown` | Koneksi terputus tepat saat mengirim. Cek folder **Sent** di Gmail terlebih dahulu; jika benar-benar **belum** terkirim, jalankan `python main.py --requeue <APP_ID>`. |
+| `already has an application from you` | Alamat email HR tersebut sudah menerima/mengantre lamaran Anda dalam 30 hari terakhir (perlindungan anti-duplikat). |
+| Hasil CV PDF terlihat kurang rapi | Jalankan `python main.py --apply ai --limit 1 --dry-run` lalu cek PDF di `data/generated_cvs/`. Pastikan CV asli memakai heading standar (PROFILE, EXPERIENCE, PROJECTS, SKILLS, EDUCATION). |
+
+---
+
+## 9. Struktur Project & Testing
+
+### File & Folder Penting
 
 ```text
-reports/2026-11-22_214834/
-    JOB_SEARCH_REPORT.docx     # 9 sections + appendix, clickable links
-    JOB_SEARCH_RESULTS.xlsx    # every opportunity, filters, frozen panes, clickable links
-    search_metadata.json       # configuration, counts, per-source status, queries, limitations
-    raw_discovery.json         # every raw discovery + every normalised opportunity
+main.py                                   Entry point aplikasi
+.env                                      Kredensial rahasia (tidak ikut Git)
+cv/                                       Taruh CV asli di sini (tidak pernah diubah)
+config/
+  settings.yaml                           Konfigurasi filter, mode, batas kirim, dan sumber
+  email_templates.yaml                    Template struktur email (EN & ID)
+  search_profiles.yaml                    Board ATS, daftar portal, dan kata kunci pencarian
+  skills_taxonomy.yaml                    Daftar skill untuk pencocokan CV & lowongan
+src/
+  cli/                                    Interactive Hub (hub.py), CLI search & apply
+  cv/                                     Parser PDF/DOCX/TXT, analyzer, struktur dokumen CV
+  discovery/ & sources/                   Konektor ATS, feed remote, HN, Brave, career pages
+  extraction/ & intelligence/             Ekstraksi konten/kontak, verifikasi, dedup, matching
+  applications/                           Email generator, Custom CV PDF, fact-check, Gmail/SMTP, tracker
+  reporting/ & storage/                   Generator DOCX/XLSX dan database SQLite
+data/                                     Database SQLite, generated CVs, outbox, cache, log
+reports/                                  Laporan hasil pencarian (DOCX/XLSX/JSON)
+tests/                                    Unit & integration tests
 ```
 
-**DOCX sections:**
-1. Executive Summary
-2. Search Coverage, by country, source category, platform and per-source status. The report separates
-   sources that were actually searched from sources that are only supported.
-3. Highly Relevant
-4. Relevant
-5. Potentially Relevant
-6. Social Media & Community
-7. International, grouped by country with salaries in their original currency
-8. Needs Verification / Closed / Suspicious
-9. Source & Research Logs: the queries executed, errors and coverage limitations
-
-**XLSX sheets:** Executive Summary, All Opportunities, Highly Relevant, Social Media Findings,
-International Jobs, Needs Verification, Source Coverage and Queries Executed. Text taken from the web is
-stored as plain text, never as formulas, so a scraped value cannot inject a formula.
-
-Data is also stored in `data/database/job_intelligence.sqlite3`: profiles, sessions, queries, raw
-discoveries, opportunities, source references, verification history, errors and report paths.
-
----
-
-## 7. Security and compliance
-
-- Credentials live only in `.env`, which is git-ignored. `.env.example` contains no secrets.
-- Every outgoing URL is validated: only http/https, no embedded credentials, and every DNS answer must be
-  a public IP address. Redirects are followed by hand and re-validated on each hop, and credentials are
-  dropped on cross-host redirects.
-- robots.txt is respected for every page fetch. Login-walled platforms are never fetched. CAPTCHAs,
-  paywalls and anti-bot measures are never bypassed.
-- Requests are throttled per host and concurrency is bounded. Timeouts and limited retries with
-  exponential backoff apply. A 401/403 response is never retried.
-- Only text responses (HTML, JSON, XML) are processed, with a size cap. Files are never downloaded or run.
-- Web content is treated as untrusted data. AI prompts wrap it in explicit *untrusted data* markers, and
-  AI output is validated against the source text.
-- The CV goes only to the configured AI provider, only with your consent, and with contact details
-  removed. Search providers receive only queries (role, skill and country terms), never the CV.
-
----
-
-## 8. Tests
+### Menjalankan Test
 
 ```powershell
 pip install -r requirements-dev.txt
-python -m pytest                      # offline suite: 198 tests (1 live test skipped)
-$env:RUN_LIVE_TESTS="1"; python -m pytest tests/integration/test_live_optin.py   # opt-in network test
+python -m pytest                                                      # offline suite: 243 passed, 1 skipped
+$env:RUN_LIVE_TESTS="1"; python -m pytest tests/integration/test_live_optin.py   # test jaringan opsional
 ```
 
-The offline suite uses realistic fixtures served through a mock HTTP transport. It covers:
-
-- CV parsing for PDF (multi-page and scanned), DOCX and TXT, and AI anti-fabrication rules
-- configuration loading, question defaults and real Questionary prompts driven by simulated Enter and arrow keys
-- query generation, HTML and JSON-LD extraction, normalisation, salary, date and timezone parsing
-- SSRF protection, robots.txt, retries, size caps and the HTTP cache
-- deduplication, verification, matching and scam detection
-- the Brave, Greenhouse, Lever and Gemini adapters, including authentication and failure cases
-- per-source failure isolation, DOCX hyperlinks, XLSX hyperlinks and formula-injection safety, the
-  repository and history
-- end-to-end pipelines with and without AI, report regeneration and interruption
-
----
-
-## 9. Extending
-
-**Add a source:** subclass `src.sources.base.BaseJobSource`, implement `search()` (and override `run()`
-or `health_check()` if needed), then add `"src.sources.<module>:<Class>"` to `discovery.connectors` in
-`settings.yaml`. The discovery engine needs no change.
-
-**Add a search provider:** subclass `SearchProvider` in `src/sources/search_engine/providers.py` and
-register it in `PROVIDERS`.
-
-**Add an AI provider:** implement `src.ai.base.AIProvider` and register it in
-`src/ai/provider_manager.py`.
-
----
-
-## 10. Known limitations
-
-- Coverage is limited to the sources listed in §4. The app does not search "the whole internet".
-- Without a search API key, portals, social media, communities and general web results are **not searched**.
-  The report says this explicitly.
-- Search-engine date filters reflect when a page was indexed, so some older postings can appear. Those
-  dates are labelled as approximate.
-- The 7-day default window excludes many older ATS postings that are still open. Choose *Last 30 days*
-  or *All available dates* for more of them.
-- Remotive delays its API data by 24 hours under its terms.
-- Social and community posts cannot prove that the company authorised them. They always need your review.
-- Scam detection is a heuristic based on warning phrases. It is not a guarantee.
-- PDFs that are only scanned images need OCR first. The app detects them and explains the problem; it does not OCR them.
-- The code is written against the documented Brave and Gemini APIs and tested with fixtures. It has not
-  been run against live Brave or Gemini accounts in this project, so run `python main.py --check` after
-  you add your keys. Gmail sending over SMTP (App Password) **was** tested live on 2026-11-23.
-- Postings from the free sources (ATS boards, remote feeds) almost never accept applications by e-mail;
-  e-mail applications mostly come from portals, community and social posts, which need a search key.
-
----
-
-## 11. Multi-channel application automation (E-mail & Web/ATS Assist)
-
-Supports both direct **e-mail applications** (approval-gated with Gmail safety limits) and **Web/ATS Assist**
-(tailored ATS PDF CV + paste-ready cover note + browser launch + manual `APPLIED_WEB` confirmation) plus full
-post-apply lifecycle tracking (`INTERVIEW`, `OFFER`, `EMPLOYER_REJECTED`, `WITHDRAWN`).
-
-```powershell
-python main.py                                 # Interactive Hub (recommended daily entry point)
-python main.py --setup-check                   # what is set up / what you still have to do manually
-python main.py --apply web                     # Web/ATS Assist: tailored CV PDF + cover note for web/ATS jobs
-python main.py --apply ai --channel all        # e-mail when available, otherwise Web/ATS Assist
-python main.py --apply basic                   # original CV PDF + template e-mail, review each one
-python main.py --apply ai                      # AI job analysis, match score, tailored CV PDF + e-mail
-python main.py --apply web --all-recent 14     # prepare from deduplicated jobs across the last 14 days
-python main.py --review                        # review pending e-mail and Web/ATS applications
-python main.py --send-queue                    # send approved e-mail applications within the limits
-python main.py --applications [--status X]     # application history & pipeline funnel
-python main.py --update-status <ID> interview --note "Technical screen"
-python main.py --sending-status                # counters, limits, pause / emergency-stop state
-python main.py --emergency-stop                # block all sending immediately (--resume-sending to clear)
-python main.py --requeue <APPLICATION_ID>      # FAILED / unknown delivery -> back to review
-python main.py --gmail-auth                    # Gmail API OAuth (gmail.send scope only), if you use it
-```
-
-Useful flags: `--session ID` (jobs from a specific search), `--limit N`, `--dry-run`,
-`--allow-duplicate` (asks for confirmation), `--auto` (automatic mode, also needs
-`mode: automatic` and `automatic_enabled: true`).
-
-| Topic | Behaviour |
-|---|---|
-| Gmail connection | `GMAIL_APP_PASSWORD` set → `smtp.gmail.com` (no Google Cloud project needed). Otherwise the Gmail API with OAuth (`--gmail-auth`). |
-| Dry run | `applications.sending.dry_run: true` writes `.eml` files to `data/outbox/` and never contacts Gmail |
-| Test recipient | `APPLICATION_TEST_RECIPIENT` sends for real, but only to that address. The employer receives nothing. |
-| Rehearsals | After a dry run or test send, the application returns to review. Approve it again in live mode to send it for real. |
-| Duplicates | One application per company + position, and **one per recipient address** within `recipient_cooldown_days` (30) |
-| Recipient extraction | Only addresses with an explicit "send your CV to …" instruction, or a recruiting inbox. Accommodation, accessibility, questions and fraud-report addresses are ignored. |
-| E-mail text | Plain and factual. The current role comes from the CV dates; one real CV bullet relevant to the job; a skill is called "used in work" only when the CV shows it in experience or projects. |
-| Limits | Option A: 35/day, 8/hour, 120 s apart, 08–18 on weekdays; automatic pause on Gmail limit errors; emergency stop |
-
----
-
-## Project layout
-
-```text
-main.py                    entry point
-config/                    settings.yaml, search_profiles.yaml, skills_taxonomy.yaml
-cv/                        put CVs here (git-ignored)
-src/cli/                   application flow, questionnaire, Rich display
-src/core/                  configuration, models, orchestrator, pipeline state, exceptions
-src/cv/                    parser, deterministic analyzer, AI-validated profile builder
-src/discovery/             query generator, source registry, discovery manager
-src/sources/               search_engine/, job_portals/, ats_platforms/, company_careers/, social_media/, communities/
-src/extraction/            HTML/JSON-LD extractor, browser renderer, content parser, normaliser
-src/intelligence/          relevance prefilter, verification, evidence, deduplication, matching
-src/ai/                    provider interface, Gemini REST provider, prompts, manager (budget + cache)
-src/storage/               SQLite schema, repository, history & preferences
-src/reporting/             report model, DOCX and XLSX generators
-src/applications/          e-mail application automation (Basic/AI modes, Gmail, sending limits, tracker)
-src/utils/                 safe HTTP client, validators, dates, logging, retry
-tests/                     unit/, integration/, fixtures/, test_pipeline.py
-data/                      database, cache, logs (created at runtime, git-ignored)
-reports/                   generated reports (git-ignored)
-```
+Detail arsitektur teknis terdahulu juga terdokumentasi di [FINAL_DEVELOPMENT_REPORT.md](FINAL_DEVELOPMENT_REPORT.md).

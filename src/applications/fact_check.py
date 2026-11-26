@@ -34,13 +34,16 @@ _NUMBER_WORDS = {"two": "2", "three": "3", "four": "4", "five": "5", "six": "6",
 _NUMBER_WORD_RE = re.compile(r"(?i)\b(" + "|".join(_NUMBER_WORDS) + r")\b")
 
 
-# Phrases that make an application read as machine-written or as a sales pitch.
+# Phrases that make an application read as machine-written, weak, desperate, or as a sales pitch.
 CLICHES = re.compile(
-    r"(?i)(i am writing to|i'm writing to|i would welcome the opportunity|i would love the opportunity|"
-    r"passionate|thrilled|excited to|eager to|leverag|synerg|dynamic team|perfect fit|esteemed|"
+    r"(?i)(i would love the opportunity|passionate|passion for|thrilled|excited to apply|eager to|"
+    r"leverag|synerg|dynamic team|perfect fit|perfect candidate|esteemed|"
     r"proven track record|results-driven|go-getter|hit the ground running|\bdelve|furthermore|moreover|"
     r"in today's|fast-paced|cutting-edge|world-class|i am confident|i'm confident|seamless|"
-    r"align(?:s)? perfectly|unique blend|valuable asset|wealth of|testament to|rest assured)")
+    r"align(?:s)? perfectly|unique blend|valuable asset|wealth of|testament to|rest assured|"
+    r"hope this email finds you well|i would like to introduce myself|just reaching out|reaching out about|"
+    r"day-to-day i've worked directly with|please give me a chance|i hope you will consider me|"
+    r"waiting for your positive response)")
 # Strength claims that need support in the CV text.
 OVERCLAIM = re.compile(r"(?i)\b(mainly|primarily|expert|expertise|extensive|extensively|deep knowledge|"
                        r"deep expertise|mastery|highly skilled|seasoned|guru|ninja|rockstar|specialist in)\b")

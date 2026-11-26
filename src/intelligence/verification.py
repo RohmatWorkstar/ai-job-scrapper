@@ -21,7 +21,7 @@ from src.utils.date_time import age_days, format_local, from_iso, utc_now
 FREE_MAIL = ("@gmail.com", "@yahoo.", "@hotmail.", "@outlook.com", "@ymail.com")
 NEGATION_RE = re.compile(
     r"(?i)\b(never|not|no|won'?t|will\s+not|do\s+not|don'?t|does\s+not|doesn'?t|without|tidak|tanpa|"
-    r"tidak\s+pernah|bebas|free\s+of)\b|\bbeware\b|\bscam|\bfraud")
+    r"tidak\s+pernah|bebas|free\s+of|tunjangan|subsidi|ditanggung|reimburse\w*|allowance|budget)\b|\bbeware\b|\bscam|\bfraud")
 
 
 @dataclass

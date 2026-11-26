@@ -154,7 +154,7 @@ def test_verifier_does_not_false_flag_indonesian_biaya_benefits(settings) -> Non
         source_name="Portal",
         source_url="https://example.test/job/1",
         listed_in_live_feed=True,
-        job_description="Tunjangan biaya kesehatan dan biaya transportasi ditanggung perusahaan. Kirim CV ke hr.nusantara@gmail.com",
+        job_description="Tunjangan biaya kesehatan, biaya transportasi, dan tunjangan biaya pelatihan ditanggung perusahaan. Kirim CV ke hr.nusantara@gmail.com",
     )
     assert v.verify(legit).status != VerificationStatus.POSSIBLE_SCAM
 

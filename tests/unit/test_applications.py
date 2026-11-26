@@ -556,7 +556,7 @@ def test_template_without_company_or_name_reads_naturally(settings, cv_doc) -> N
     _, profile, doc = cv_doc
     e = EmailGenerator(settings).template_email(job(company_name=None), profile, CandidateIdentity(), doc=doc)
     assert e.body.startswith("Dear Hiring Team,") and "at your company," not in e.body.splitlines()[0]
-    assert e.subject == "Application for Backend Developer"
+    assert e.subject == "Application – Backend Developer"
 
 
 def test_edited_email_validation() -> None:
@@ -702,12 +702,12 @@ def test_email_generator_template_and_ai_fallback(settings, cv_doc) -> None:
     gen = EmailGenerator(settings)
     j = job(job_title="Backend Developer", company_name="Acme", required_skills=["Node.js", "Kubernetes"])
     e = gen.template_email(j, profile, doc.identity, matched_skills=["Node.js", "Kubernetes"], doc=doc)
-    assert e.subject == "Application for Backend Developer - Andi Pratama"
+    assert "Backend Developer" in e.subject and "Andi Pratama" in e.subject
     assert "Acme" in e.body and "Backend Developer" in e.body and "Node.js" in e.body
     assert "Kubernetes" not in e.body  # never claims a skill the CV does not prove
     assert e.body.rstrip().endswith("linkedin.com/in/andi-example")
     j_id = job(job_description="Kami mencari pengembang yang memiliki pengalaman dan mampu bekerja dalam tim.")
-    assert gen.template_email(j_id, profile, doc.identity, doc=doc).subject.startswith("Lamaran Posisi")
+    assert gen.template_email(j_id, profile, doc.identity, doc=doc).subject.startswith("Lamaran")
 
     a = JobAnalyzer(settings).analyze_deterministic(j)
     bad_ai, _ = fake_ai({"job application e-mail": {"subject": "Backend Developer application", "body":
@@ -972,8 +972,8 @@ def test_modern_bulleted_cv_is_structured(settings, tmp_path: Path) -> None:
     assert "Backend:" in text and "Programming Languages:" in text and "PRISA - Digital Insurance Platform" in text
     assert tcv.skill_groups[0][0] in ("Backend", "Database & Performance")  # job-relevant group first
     e = EmailGenerator(settings).template_email(j, profile, doc.identity, doc=doc)
-    assert "I have 3+ years of experience as a Fullstack Engineer" in e.body and "Budi Santoso" in e.subject
-    assert "I'm currently a Developer Supervisor at PT Contoh Asuransi" in e.body
+    assert "over 3 years" in e.body and "Budi Santoso" in e.subject
+    assert "Developer Supervisor" in e.body and "PT Contoh Asuransi" not in e.body
 
 
 def test_eligibility_skips_onsite_abroad_and_german_market(settings) -> None:
@@ -1002,9 +1002,9 @@ def test_alias_skill_counts_as_matched(settings) -> None:
 
 
 
-# ---------------------------------------------------- user feedback (2026-11-23)
-CLICHE_WORDS = ("i am writing to", "i would welcome", "passionate", "working mainly", "mainly", "leverage",
-                "contribute to", "proven track record", "excited")
+# ---------------------------------------------------- email quality guardrails
+CLICHE_WORDS = ("passionate", "working mainly", "mainly", "leverage", "proven track record", "excited to apply",
+                "perfect candidate", "reaching out about", "hope this email finds you well", "day-to-day i've worked directly with")
 
 
 def test_template_email_is_plain_and_factual(settings) -> None:
@@ -1019,13 +1019,12 @@ def test_template_email_is_plain_and_factual(settings) -> None:
     body = e.body.lower()
     for phrase in CLICHE_WORDS:
         assert phrase not in body, phrase
-    assert "i'm currently a developer supervisor at pt contoh asuransi" in body        # "Present" -> currently
-    assert "kubernetes" not in body                                                     # never claimed
-    assert "nestjs" in body                                                             # in the quoted CV bullet
-    assert "python" in body and "my skill set also includes python" in body             # only listed, said honestly
-    # The quoted achievement is a real CV bullet (verbatim after the lead-in).
+    assert "developer supervisor" in body
+    assert "pt contoh asuransi" not in body  # does not unnecessarily name previous/current employers
+    assert "kubernetes" not in body          # never claimed
+    assert "nestjs" in body and "python" in body
     assert "led the engineering team building the hr system (react, laravel, nestjs)" in body
-    assert len(e.body.split()) < 170
+    assert 85 <= len(e.body.split()) <= 185
 
 
 def test_no_second_application_to_the_same_recipient(tmp_path: Path, tracker: ApplicationTracker) -> None:

@@ -158,26 +158,29 @@ class SmtpTransport:
 class TestRedirectTransport:
     """Sends for real, but ONLY to a test address you own (end-to-end simulation).
 
-    The employer never receives anything: the To header is replaced, the subject is prefixed with
-    "[TEST for <original>]" and X-Original-To keeps the intended address. Like a dry run, it is a
-    rehearsal: the application returns to review instead of becoming SENT, so it can still be
-    sent to the employer later. It uses the real Gmail counters (it is real Gmail sending).
+    The employer never receives anything: the To header is replaced and X-Original-To keeps the
+    intended address. Set ``tag_subject=False`` to keep the Subject identical to a live send
+    (no "[TEST for ...]" prefix). Like a dry run, it is a rehearsal: the application returns to
+    review instead of becoming SENT, so it can still be sent to the employer later. It uses the
+    real Gmail counters (it is real Gmail sending).
     """
 
     rehearsal = True
 
-    def __init__(self, inner: MailTransport, test_recipient: str) -> None:
+    def __init__(self, inner: MailTransport, test_recipient: str, *, tag_subject: bool = True) -> None:
         self.inner = inner
         self.name = inner.name
         self.test_recipient = test_recipient
+        self.tag_subject = tag_subject
 
     async def send(self, msg: EmailMessage) -> TransportResult:
         original = str(msg["To"])
         del msg["To"]
         msg["To"] = self.test_recipient
-        subject = str(msg["Subject"])
-        del msg["Subject"]
-        msg["Subject"] = f"[TEST for {original}] {subject}"
+        if self.tag_subject:
+            subject = str(msg["Subject"])
+            del msg["Subject"]
+            msg["Subject"] = f"[TEST for {original}] {subject}"
         msg["X-Original-To"] = original
         res = await self.inner.send(msg)
         return TransportResult(message_id=res.message_id, transport=f"{res.transport}:test->{self.test_recipient}")

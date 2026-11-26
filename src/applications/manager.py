@@ -175,9 +175,10 @@ class ApplicationManager:
                 if rec:
                     self.tracker.reject(rec.id, "not eligible: " + "; ".join(elig.reasons)[:500], closed_by="system")
                 continue
-            email = self.emails.template_email(job, self.profile, self.doc.identity,
-                                               matched_skills=job.match.matched_skills, doc=self.doc)
             analysis = self.analyzer.analyze_deterministic(job)  # no AI call: shown so the user knows the job
+            email = self.emails.template_email(job, self.profile, self.doc.identity,
+                                               matched_skills=job.match.matched_skills, doc=self.doc,
+                                               recipient_email=rc.email, analysis=analysis)
             rec = self._create(base, allow_duplicate, authorization,
                                notes=rc.warnings + email.notes + self.identity_warnings(),
                                match_score=job.relevance_score,
@@ -244,7 +245,8 @@ class ApplicationManager:
                 experience_years=self.profile.experience_years,
             )
             matched = [m["skill"] for m in match.matched_skills]
-            email = await self.emails.ai_email(job, analysis, self.profile, self.doc, matched)
+            email = await self.emails.ai_email(job, analysis, self.profile, self.doc, matched,
+                                               recipient_email=rc.email)
             info.update({"cv_changes": tcv.changes, "rejected_rewrites": tcv.rejected_rewrites,
                          "cv_method": tcv.method, "email_method": email.method})
             self.tracker.update_fields(rec.id, match=info, notes=rec.notes + email.notes + self.identity_warnings())

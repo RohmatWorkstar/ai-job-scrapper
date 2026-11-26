@@ -76,11 +76,19 @@ class Sections:
     header_lines: list[str] = field(default_factory=list)
 
 
+_NON_SPOKEN_LANG_RE = re.compile(
+    r"\b(?:programming|coding|scripting|computer|query|markup|web)\s+languages?\b"
+)
+_SOFT_SKILLS_HEADERS = {"soft skills", "interpersonal skills", "personal skills"}
+
+
 def _header_name(line: str) -> str | None:
     s = re.sub(r"[^a-zA-Z&/ ]", "", line).strip().lower()
     if not s or len(s) > 40 or len(line.strip()) > 45:
         return None
     for name, words in SECTION_KEYWORDS.items():
+        if name == "languages" and _NON_SPOKEN_LANG_RE.search(s):
+            continue
         for w in words:
             if s == w or (s.startswith(w) and len(s) <= len(w) + 12) or s.endswith(" " + w):
                 return name
@@ -97,6 +105,9 @@ def split_sections(text: str) -> Sections:
         if name:
             current = name
             buf.setdefault(current, [])
+            clean = re.sub(r"[^a-zA-Z&/ ]", "", line).strip().lower()
+            if name == "skills" and clean in _SOFT_SKILLS_HEADERS:
+                buf[current].append("Soft Skills")
             continue
         buf.setdefault(current, []).append(line)
     out.by_name = {k: "\n".join(v).strip() for k, v in buf.items() if "\n".join(v).strip()}

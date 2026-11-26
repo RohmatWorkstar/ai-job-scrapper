@@ -151,13 +151,17 @@ def _split_title_company(line: str) -> tuple[str, str]:
     return line.strip(), ""
 
 
+_EXPLICIT_SEP = re.compile(r"\s+(?:-|–|—|at|@|\|)\s+")
+
+
 def parse_experience(section: str) -> list[ExperienceEntry]:
     """Split an experience/projects section into entries with bullets.
 
     * Bulleted CVs: every non-bullet line that is not a wrapped continuation is an entry header.
     * Unbulleted CVs: a header is a short line with role words or followed by a date line.
-    * Wrapped lines (indented, or starting lower-case / with punctuation) continue the previous bullet,
-      except when the line itself matches a header pattern (date range or role + separator).
+    * Wrapped lines (indented, starting lower-case / with punctuation, or continuing an unfinished
+      sentence) continue the previous bullet, except when the line itself matches a header pattern
+      (date range, explicit title/company separator, or followed by a date range).
     """
     entries: list[ExperienceEntry] = []
     cur: ExperienceEntry | None = None
@@ -168,13 +172,36 @@ def parse_experience(section: str) -> list[ExperienceEntry]:
         if not line:
             continue
         is_bullet = bool(_BULLET.match(line))
+        next_line = next((l.strip() for l in lines[i + 1:] if l.strip()), "")
+        next_is_date = bool(
+            next_line and _RANGE_RE.search(next_line)
+            and len(_RANGE_RE.sub("", next_line).strip(" ,|-–—()")) < 4
+        )
+        next_is_bullet = bool(next_line and _BULLET.match(next_line))
+        has_explicit_sep = bool(_EXPLICIT_SEP.search(line))
         looks_like_header = bool(_RANGE_RE.search(line)) or (
-            bool(ROLE_WORDS.search(line)) and bool(_SPLIT_TITLE.search(line)) and len(line) <= 140
+            not line[:1].islower()
+            and line[:1] not in "(,;&"
+            and not line.endswith(".")
+            and len(line) <= 140
+            and (next_is_date or has_explicit_sep)
+        )
+        prev_bullet = cur.bullets[-1] if (cur is not None and cur.bullets) else ""
+        prev_incomplete = bool(prev_bullet and not re.search(r"[.!?]$", prev_bullet))
+        bare_project_header = bool(
+            not line[:1].islower() and not line.endswith(".") and len(line) <= 60 and next_is_bullet
+            and not prev_bullet.endswith((",", ";", ":", "("))
+            and prev_bullet.count("(") <= prev_bullet.count(")")
         )
         continuation = (
             not is_bullet
             and not looks_like_header
-            and (raw[:1].isspace() or line[:1].islower() or line[:1] in "(,;&")
+            and (
+                raw[:1].isspace()
+                or line[:1].islower()
+                or line[:1] in "(,;&"
+                or (prev_incomplete and not bare_project_header)
+            )
         )
         if continuation and cur is not None and cur.bullets:
             cur.bullets[-1] = f"{cur.bullets[-1]} {line}"
@@ -188,14 +215,14 @@ def parse_experience(section: str) -> list[ExperienceEntry]:
         if bulleted:
             header_like = not is_bullet and len(text) <= 160
         else:
-            next_line = next((l.strip() for l in lines[i + 1:] if l.strip()), "")
             header_like = (
                 not is_bullet
                 and len(text) <= 120
                 and not text.endswith(".")
                 and (
                     ROLE_WORDS.search(rest) is not None
-                    or (bool(_RANGE_RE.search(next_line)) and len(_RANGE_RE.sub("", next_line).strip()) < 4)
+                    or next_is_date
+                    or (has_explicit_sep and next_is_bullet)
                 )
             )
         if header_like:
@@ -233,17 +260,65 @@ _GROUP_LABEL = re.compile(
 )
 
 
+def _is_standalone_group_label(line: str, detector: Any) -> bool:
+    clean = line.strip(" :-")
+    if not clean or len(clean) > 45 or len(clean.split()) > 5:
+        return False
+    if any(ch in clean for ch in ",;•|()"):
+        return False
+    if not _GROUP_LABEL.search(clean):
+        return False
+    if detector is not None:
+        hits = detector.detect(clean)
+        if any(h.name.lower() == clean.lower() for h in hits):
+            return False
+    return True
+
+
 def parse_skills(section: str, detector: Any) -> list[tuple[str, list[str]]]:
-    """'Backend Node.js, Express.js, NestJS' -> ('Backend', ['Node.js', 'Express.js', 'NestJS'])."""
+    """Parse grouped skills (both 'Backend: Node.js, ...' and standalone heading + wrapped lines)."""
+    raw_lines = [raw for raw in section.splitlines() if raw.strip()]
+    # Detect multi-line heading layout (e.g. "Programming Languages\nJavaScript, TypeScript, ...").
+    standalone_flags = [_is_standalone_group_label(_BULLET.sub("", r.strip()), detector) for r in raw_lines]
+    if any(standalone_flags):
+        grouped_raw: list[tuple[str, str]] = []
+        current_label = ""
+        for raw, is_lbl in zip(raw_lines, standalone_flags):
+            cleaned = _BULLET.sub("", raw.strip())
+            if is_lbl:
+                current_label = cleaned.strip(" :-")
+                continue
+            if current_label:
+                if grouped_raw and grouped_raw[-1][0] == current_label:
+                    prev_lbl, prev_text = grouped_raw[-1]
+                    grouped_raw[-1] = (prev_lbl, f"{prev_text} {cleaned}")
+                else:
+                    grouped_raw.append((current_label, cleaned))
+            else:
+                if grouped_raw and (raw[:1].isspace() or cleaned[:1].islower() or grouped_raw[-1][1].endswith(",")):
+                    prev_lbl, prev_text = grouped_raw[-1]
+                    grouped_raw[-1] = (prev_lbl, f"{prev_text} {cleaned}")
+                else:
+                    grouped_raw.append(("", cleaned))
+        groups: list[tuple[str, list[str]]] = []
+        for label, line in grouped_raw:
+            if not label:
+                head = line.split(",", 1)[0]
+                if ":" in head:
+                    label, line = line.split(":", 1)
+            items = [i for i in _split_outside_parens(line) if 1 <= len(i) <= 60]
+            if items:
+                groups.append((label.strip(" :-"), items))
+        return groups
+
     logical: list[str] = []
-    for raw in section.splitlines():
-        if not raw.strip():
-            continue
-        if logical and (raw[:1].isspace() or raw.strip()[:1].islower()):
-            logical[-1] += " " + raw.strip()
+    for raw in raw_lines:
+        cleaned = _BULLET.sub("", raw.strip())
+        if logical and (raw[:1].isspace() or cleaned[:1].islower() or logical[-1].endswith(",")):
+            logical[-1] += " " + cleaned
         else:
-            logical.append(_BULLET.sub("", raw.strip()))
-    groups: list[tuple[str, list[str]]] = []
+            logical.append(cleaned)
+    groups = []
     for line in logical:
         label = ""
         head = line.split(",", 1)[0]

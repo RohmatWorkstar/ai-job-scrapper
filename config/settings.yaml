@@ -246,6 +246,9 @@ applications:
     # End-to-end test: send every e-mail for real, but only to this address you own (or set
     # APPLICATION_TEST_RECIPIENT in .env). Employers receive nothing; applications return to review.
     test_recipient: ""
+    # false = keep realistic Subject (intended employer stays in X-Original-To header);
+    # true  = prefix Subject with "[TEST for <original>]".
+    test_tag_subject: false
     mode: manual                     # manual (default) | scheduled | automatic
     automatic_enabled: false         # automatic mode also needs mode: automatic AND the --auto flag
     automatic_min_match_score: 75

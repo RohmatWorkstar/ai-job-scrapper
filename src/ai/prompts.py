@@ -159,37 +159,58 @@ def cv_tailor_prompt(job: dict[str, Any], cv: dict[str, Any]) -> str:
 
 
 def application_email_prompt(job: dict[str, Any], candidate: dict[str, Any], language: str = "en") -> str:
-    schema = {"subject": "short e-mail subject naming the position", "body": "e-mail body WITHOUT greeting signature block"}
-    lang = "Indonesian (Bahasa Indonesia, formal)" if language == "id" else "English"
+    schema = {
+        "subject": "concise subject e.g. 'Application – <Position>' or '<Position> Application' (candidate name is appended locally)",
+        "body": "e-mail body from greeting through closing line, WITHOUT contact details or signature block",
+    }
+    lang = "professional Indonesian (Bahasa Indonesia)" if language == "id" else "clear, fluent professional English"
     return (
-        f"Write a short job application e-mail in {lang} (90-170 words) the way an experienced professional writes "
-        "to a recruiter: plain, specific and calm. Mention the exact job title and company name, say what the candidate "
-        "does now (current vs previous role exactly as the dates show), give ONE concrete example taken from the CV, "
-        "and say that the CV is attached. " + NO_FABRICATION + " Only call a skill 'used in work' if it appears in the "
-        "candidate's experience or projects. Do not use: 'I am writing to', 'I would welcome the opportunity', "
-        "'passionate', 'excited', 'leverage', 'perfect fit', 'proven track record', 'mainly', 'expert', 'extensive', "
-        "superlatives or buzzwords. Do not include contact details, links, placeholders like [Name], or a signature: "
-        "those are added separately. Start the body with a salutation such as 'Dear Hiring Team,'. "
+        f"Write a job application e-mail in {lang} (100-160 words, up to 180 words only when extra technical context "
+        "adds clear value; 3-5 short paragraphs) as an experienced software engineer applying directly to a recruiter.\n\n"
+        "Structure:\n"
+        "1. Greeting: use 'Dear <recruiter_first_name>,' ONLY when recruiter_first_name is provided; otherwise use "
+        "'Dear Hiring Team,' or 'Dear Recruitment Team,' (Indonesian: 'Yth. Tim Rekrutmen,' or 'Yth. <first_name>,'). "
+        "Never invent a recruiter's name.\n"
+        "2. Opening: state the application immediately with the exact job title and company name (do not force the "
+        "company name into every sentence).\n"
+        "3. Professional Experience: state current title (when relevant), exact verified years of experience, and "
+        "only the 3-4 technologies most relevant to this role. Do NOT automatically mention previous employer names "
+        "(previous company names are optional, not mandatory).\n"
+        "4. Relevant Accomplishments: select 1-2 experiences from the candidate data that directly match this job's "
+        "title, required skills, and responsibilities. Clearly distinguish professional employment from projects. "
+        "Never repeat the whole CV or dump an unfocused list of skills.\n"
+        "5. Portfolio & Closing: naturally note the attached CV and mention portfolio/GitHub/LinkedIn links below ONLY "
+        "if available_link_types is non-empty, followed by a confident, humble closing.\n\n"
+        "Strict rules:\n"
+        "- " + NO_FABRICATION + "\n"
+        "- Never invent company culture, products, business challenges, recruiter identities, metrics, or URLs.\n"
+        "- Never claim professional employment experience with a technology supported only by a project or skills list.\n"
+        "- Avoid AI clichés and weak/casual phrasing: 'I am excited to apply', 'perfect candidate', 'extensive experience', "
+        "'Day-to-day I've worked directly with', 'Reaching out about', 'Just reaching out', 'Hope this email finds you well', "
+        "'I would like to introduce myself', 'Hey', 'passionate', 'leverage', 'delve', 'proven track record', "
+        "'Please give me a chance', 'I hope you will consider me', 'waiting for your positive response'.\n"
+        "- Do not include contact details, URLs, placeholders like [Name], internal reasoning, or a signature block.\n"
         "Return JSON:\n" + json.dumps(schema, indent=1)
         + "\n\nJob:\n" + fence(json.dumps(job, ensure_ascii=False))
-        + "\n\nCandidate (from the CV):\n" + fence(json.dumps(candidate, ensure_ascii=False))
+        + "\n\nCandidate (from verified CV data):\n" + fence(json.dumps(candidate, ensure_ascii=False))
     )
 
 
 def cover_note_prompt(job: dict[str, Any], candidate: dict[str, Any], language: str = "en") -> str:
-    schema = {"body": "concise cover note (70-150 words) ready to paste into a web/ATS application form"}
-    lang = "Indonesian (Bahasa Indonesia, formal)" if language == "id" else "English"
+    schema = {"body": "concise cover note (80-140 words) ready to paste into a web/ATS application form"}
+    lang = "professional Indonesian (Bahasa Indonesia)" if language == "id" else "clear, fluent professional English"
     return (
-        f"Write a short, paste-ready cover note in {lang} (70-150 words) for an online job application form: "
-        "plain, specific and calm. Mention the exact job title and company name, state the candidate's current or "
-        "most recent role (accurately reflecting the dates), include ONE concrete example from the CV experience or "
-        "projects, and highlight directly relevant skills evidenced in the CV. " + NO_FABRICATION + " Do not write "
-        "e-mail headers, subject lines, 'CV is attached', contact details, links, placeholders like [Name], or a "
-        "signature block. Do not use: 'I am writing to', 'passionate', 'excited', 'leverage', 'perfect fit', "
-        "'proven track record', 'expert', 'extensive', superlatives or buzzwords. "
+        f"Write a concise, paste-ready cover note in {lang} (80-140 words, 2-3 short paragraphs) for an online "
+        "application form. Mention the exact job title and company name, briefly introduce the candidate's current "
+        "title, verified years, and 3-4 role-relevant technologies (do not unnecessarily mention previous employer "
+        "names), and highlight 1-2 directly matching accomplishments from the candidate data while distinguishing "
+        "professional employment from projects. " + NO_FABRICATION + " Do not write e-mail headers, greetings, "
+        "'CV is attached', contact details, URLs, placeholders like [Name], or a signature block. Avoid clichés "
+        "('I am excited to apply', 'perfect candidate', 'extensive experience', 'Reaching out about', 'passionate', "
+        "'leverage', 'delve', 'proven track record'). "
         "Return JSON:\n" + json.dumps(schema, indent=1)
         + "\n\nJob:\n" + fence(json.dumps(job, ensure_ascii=False))
-        + "\n\nCandidate (from the CV):\n" + fence(json.dumps(candidate, ensure_ascii=False))
+        + "\n\nCandidate (from verified CV data):\n" + fence(json.dumps(candidate, ensure_ascii=False))
     )
 
 

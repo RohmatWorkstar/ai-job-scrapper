@@ -31,7 +31,7 @@ _EXTENDED_BULLETS = re.compile(r"[●▪◦▸►‣⁃◆■➢➤✓✔→]
 
 
 def _normalise(text: str) -> str:
-    text = text.replace("\x00", "")
+    text = text.replace("\x00", "").replace("\u00a0", " ")
     text = re.sub(r"[​-‏﻿]", "", text)
     text = _EXTENDED_BULLETS.sub("•", text)
     text = re.sub(r"[ \t]+", " ", text)

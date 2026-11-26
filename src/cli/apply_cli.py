@@ -64,6 +64,16 @@ def test_recipient(settings: Settings) -> str:
             or str(settings.get("applications.sending.test_recipient", "") or "").strip())
 
 
+def test_tag_subject(settings: Settings) -> bool:
+    """Whether TestRedirectTransport prefixes subjects with '[TEST for ...]'. Defaults to config."""
+    raw = os.environ.get("APPLICATION_TEST_TAG_SUBJECT", "").strip().lower()
+    if raw in ("0", "false", "no", "off"):
+        return False
+    if raw in ("1", "true", "yes", "on"):
+        return True
+    return bool(settings.get("applications.sending.test_tag_subject", False))
+
+
 def build_transport(settings: Settings, dry_run: bool) -> tuple[MailTransport, str]:
     transport, sender = _build_base_transport(settings, dry_run)
     test = test_recipient(settings)
@@ -73,7 +83,7 @@ def build_transport(settings: Settings, dry_run: bool) -> tuple[MailTransport, s
         ok, why = validate_address(test)
         if not ok:
             raise JobIntelError(f"APPLICATION_TEST_RECIPIENT '{test}' is not usable: {why}")
-        transport = TestRedirectTransport(transport, test)
+        transport = TestRedirectTransport(transport, test, tag_subject=test_tag_subject(settings))
     return transport, sender
 
 
